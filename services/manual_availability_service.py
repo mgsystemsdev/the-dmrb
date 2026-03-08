@@ -8,9 +8,12 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
+from config.settings import get_settings
 from domain import unit_identity
 from db import repository
 from services import turnover_service
+
+DEFAULT_ACTOR = get_settings().default_actor
 
 
 def add_manual_availability(
@@ -24,7 +27,7 @@ def add_manual_availability(
     move_in_date: Optional[date] = None,
     report_ready_date: Optional[date] = None,
     today: Optional[date] = None,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> int:
     """
     Look up unit by (property_id, phase_code, building_code, unit_number).

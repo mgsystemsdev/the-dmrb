@@ -1,5 +1,4 @@
 import os
-import sqlite3
 import sys
 import tempfile
 from datetime import date, datetime, timedelta
@@ -8,27 +7,24 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services import import_service, turnover_service
-
-SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "..", "db", "schema.sql")
-MIG_009 = os.path.join(os.path.dirname(__file__), "..", "db", "migrations", "009_add_legal_and_availability_columns.sql")
-MIG_010 = os.path.join(os.path.dirname(__file__), "..", "db", "migrations", "010_add_sla_event_anchor_snapshot.sql")
-
+from db import repository
+from domain import unit_identity
+from tests.helpers.db_bootstrap import bootstrap_runtime_db
 
 def _fresh_db_with_migrations_009_010():
-    conn = sqlite3.connect(":memory:")
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.row_factory = sqlite3.Row
-    with open(SCHEMA_PATH) as f:
-        conn.executescript(f.read())
-    with open(MIG_009) as f:
-        conn.executescript(f.read())
-    with open(MIG_010) as f:
-        conn.executescript(f.read())
-    return conn
+    return bootstrap_runtime_db()
+
+
+def _dispose_db(conn, db_path: str):
+    conn.close()
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 def test_pending_fas_first_confirmation_triggers_sla_reconcile_and_does_not_overwrite_move_out_date():
-    conn = _fresh_db_with_migrations_009_010()
+    conn, db_path = _fresh_db_with_migrations_009_010()
     now = datetime.utcnow().isoformat()
     today = date.today()
 
@@ -36,15 +32,23 @@ def test_pending_fas_first_confirmation_triggers_sla_reconcile_and_does_not_over
     old_mo = (today - timedelta(days=15)).isoformat()
     unit_code = "5-A-101"
     conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'P')")
-    conn.execute(
-        "INSERT INTO unit (unit_id, property_id, unit_code_raw, unit_code_norm) VALUES (1,1,?,?)",
-        (unit_code, unit_code),
+    phase_code, building_code, unit_number = unit_identity.parse_unit_parts(unit_code)
+    unit_key = unit_identity.compose_identity_key(phase_code, building_code, unit_number)
+    unit_row = repository.resolve_unit(
+        conn,
+        property_id=1,
+        phase_code=phase_code,
+        building_code=building_code,
+        unit_number=unit_number,
+        unit_code_raw=unit_code,
+        unit_code_norm=unit_code,
+        unit_identity_key=unit_key,
     )
     conn.execute(
         """INSERT INTO turnover
            (turnover_id, property_id, unit_id, source_turnover_key, move_out_date, created_at, updated_at)
-           VALUES (1, 1, 1, 'k', ?, ?, ?)""",
-        (old_mo, now, now),
+           VALUES (1, 1, ?, 'k', ?, ?, ?)""",
+        (unit_row["unit_id"], old_mo, now, now),
     )
     conn.commit()
 
@@ -117,5 +121,5 @@ def test_pending_fas_first_confirmation_triggers_sla_reconcile_and_does_not_over
     assert audits[0]["old_value"] == old_mo
     assert audits[0]["new_value"] == confirmed_mo
 
-    conn.close()
+    _dispose_db(conn, db_path)
 

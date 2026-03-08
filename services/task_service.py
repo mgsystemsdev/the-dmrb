@@ -1,8 +1,11 @@
 from datetime import date, datetime
 from typing import Any, Optional
 
+from config.settings import get_settings
 from db import repository
 from services.turnover_service import reconcile_after_task_change
+
+DEFAULT_ACTOR = get_settings().default_actor
 
 ALLOWED_TASK_FIELDS = frozenset({
     "execution_status", "confirmation_status", "vendor_due_date",
@@ -37,7 +40,7 @@ def mark_vendor_completed(
     conn,
     task_id: int,
     today: Optional[date] = None,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> None:
     row = _get_task(conn, task_id)
     if row is None:
@@ -63,7 +66,7 @@ def confirm_task(
     conn,
     task_id: int,
     today: Optional[date] = None,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> None:
     row = _get_task(conn, task_id)
     if row is None:
@@ -91,7 +94,7 @@ def reject_task(
     conn,
     task_id: int,
     today: Optional[date] = None,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> None:
     row = _get_task(conn, task_id)
     if row is None:
@@ -122,7 +125,7 @@ def update_task_fields(
     task_id: int,
     fields: dict[str, Any],
     today: Optional[date] = None,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> None:
     """Update task fields; delegate to mark_vendor_completed/confirm_task/reject_task when appropriate. Reconcile once per mutation."""
     row = _get_task(conn, task_id)

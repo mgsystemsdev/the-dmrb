@@ -1,8 +1,11 @@
 from datetime import datetime, date
 from typing import Optional
 
+from config.settings import get_settings
 from db import repository
 from domain.sla_engine import evaluate_sla_state, SLA_THRESHOLD_DAYS
+
+DEFAULT_ACTOR = get_settings().default_actor
 
 
 _UNSET = object()
@@ -15,7 +18,7 @@ def reconcile_sla_for_turnover(
     move_out_date: Optional[date],
     manual_ready_confirmed_at: Optional[str],
     today: date,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
     source: str = "system",
     correlation_id: Optional[str] = None,
     previous_effective_move_out_date=_UNSET,

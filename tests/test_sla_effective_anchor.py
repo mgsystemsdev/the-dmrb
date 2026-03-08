@@ -1,5 +1,4 @@
 import os
-import sqlite3
 import sys
 from datetime import date, datetime, timedelta
 
@@ -7,28 +6,44 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services import turnover_service, sla_service
-
-SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "..", "db", "schema.sql")
+from db import repository
+from domain import unit_identity
+from tests.helpers.db_bootstrap import bootstrap_runtime_db
 
 
 def _fresh_db():
-    conn = sqlite3.connect(":memory:")
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.row_factory = sqlite3.Row
-    with open(SCHEMA_PATH) as f:
-        conn.executescript(f.read())
-    return conn
+    return bootstrap_runtime_db()
+
+
+def _dispose_db(conn, db_path: str):
+    conn.close()
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 def _seed_turnover(conn, *, move_out_date_iso: str):
     now = datetime.utcnow().isoformat()
     conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'P')")
-    conn.execute("INSERT INTO unit (unit_id, property_id, unit_code_raw, unit_code_norm) VALUES (1,1,'A','a')")
+    unit_code = "5-A-101"
+    phase_code, building_code, unit_number = unit_identity.parse_unit_parts(unit_code)
+    unit_key = unit_identity.compose_identity_key(phase_code, building_code, unit_number)
+    unit_row = repository.resolve_unit(
+        conn,
+        property_id=1,
+        phase_code=phase_code,
+        building_code=building_code,
+        unit_number=unit_number,
+        unit_code_raw=unit_code,
+        unit_code_norm=unit_code,
+        unit_identity_key=unit_key,
+    )
     conn.execute(
         """INSERT INTO turnover
            (turnover_id, property_id, unit_id, source_turnover_key, move_out_date, created_at, updated_at)
-           VALUES (1, 1, 1, 'k', ?, ?, ?)""",
-        (move_out_date_iso, now, now),
+           VALUES (1, 1, ?, 'k', ?, ?, ?)""",
+        (unit_row["unit_id"], move_out_date_iso, now, now),
     )
     conn.commit()
 
@@ -40,7 +55,7 @@ def _get_sla_reconcile_audits(conn):
 
 
 def test_anchor_change_closes_sla_without_churn():
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     old_mo = (date.today() - timedelta(days=15)).isoformat()
     _seed_turnover(conn, move_out_date_iso=old_mo)
 
@@ -85,11 +100,11 @@ def test_anchor_change_closes_sla_without_churn():
     assert audits[0]["new_value"] == new_mo.isoformat()
     assert audits[0]["source"] == "manual"
 
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_anchor_change_keeps_open_breach_no_churn():
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     old_mo = (date.today() - timedelta(days=20)).isoformat()
     _seed_turnover(conn, move_out_date_iso=old_mo)
 
@@ -128,11 +143,11 @@ def test_anchor_change_keeps_open_breach_no_churn():
     events = conn.execute("SELECT * FROM sla_event WHERE turnover_id = 1").fetchall()
     assert len(events) == 1, f"Expected no churn events, got {len(events)} rows"
 
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_sla_reconcile_opened_on_anchor_change():
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     # Start with non-breach anchor, then move anchor back past threshold so breach opens.
     initial_mo = (date.today() - timedelta(days=5)).isoformat()
     _seed_turnover(conn, move_out_date_iso=initial_mo)
@@ -152,11 +167,11 @@ def test_sla_reconcile_opened_on_anchor_change():
     assert len(audits) == 1
     assert audits[0]["new_value"] == "OPENED"
 
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_sla_reconcile_resolved_on_manual_ready_confirm():
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     old_mo = (date.today() - timedelta(days=15)).isoformat()
     _seed_turnover(conn, move_out_date_iso=old_mo)
 
@@ -183,11 +198,11 @@ def test_sla_reconcile_resolved_on_manual_ready_confirm():
     assert audits[0]["new_value"] == "OPENED"
     assert audits[1]["new_value"] == "RESOLVED"
 
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_anchor_change_does_not_reopen_after_ready_confirm():
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     # Seed with old move-out so SLA breach opens.
     old_mo = (date.today() - timedelta(days=15)).isoformat()
     _seed_turnover(conn, move_out_date_iso=old_mo)
@@ -236,11 +251,11 @@ def test_anchor_change_does_not_reopen_after_ready_confirm():
     assert audits[1]["new_value"] == "RESOLVED"
     assert audits[2]["new_value"] == "NOOP"
 
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_sla_reconcile_noop_when_state_unchanged():
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     today = date.today()
     mo_iso = today.isoformat()
     _seed_turnover(conn, move_out_date_iso=mo_iso)
@@ -261,11 +276,11 @@ def test_sla_reconcile_noop_when_state_unchanged():
     assert len(audits) == 1
     assert audits[0]["new_value"] == "NOOP"
 
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_sla_reconcile_failed_on_convergence_mismatch(monkeypatch):
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     audits: list[dict] = []
 
     # Stub repository calls inside sla_service to manufacture a convergence mismatch safely.
@@ -311,4 +326,5 @@ def test_sla_reconcile_failed_on_convergence_mismatch(monkeypatch):
     sla_audits = [a for a in audits if a["field_name"] == "sla_reconcile"]
     assert len(sla_audits) == 1
     assert sla_audits[0]["new_value"] == "FAILED"
+    _dispose_db(conn, db_path)
 

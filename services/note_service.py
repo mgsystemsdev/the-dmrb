@@ -4,7 +4,10 @@ Note service: create and resolve notes with audit. No reconciliation (notes do n
 from datetime import datetime
 from typing import Optional
 
+from config.settings import get_settings
 from db import repository
+
+DEFAULT_ACTOR = get_settings().default_actor
 
 
 def _now_iso() -> str:
@@ -19,7 +22,7 @@ def create_note(
     note_type: str = "info",
     blocking: int = 0,
     severity: str = "INFO",
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> int:
     created_at = _now_iso()
     note_id = repository.insert_note(
@@ -55,7 +58,7 @@ def resolve_note(
     conn,
     note_id: int,
     resolved_at: Optional[str] = None,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> None:
     row = repository.get_note_by_id(conn, note_id)
     if row is None:

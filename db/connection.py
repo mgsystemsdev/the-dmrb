@@ -1,25 +1,26 @@
 import os
 import shutil
-import sqlite3
 from datetime import datetime, timezone
 
+from db.adapters import get_adapter
+from db.adapters.base_adapter import ConnectionWrapper
+from db.config import resolve_database_config
+from db.postgres_bootstrap import ensure_postgres_ready
 
-def get_connection(db_path: str) -> sqlite3.Connection:
-    parent = os.path.dirname(db_path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
-    conn.row_factory = sqlite3.Row
-    return conn
+def get_connection(db_path: str | None = None) -> ConnectionWrapper:
+    config = resolve_database_config(db_path_override=db_path)
+    adapter = get_adapter(config)
+    return adapter.connect(config)
 
 
 def initialize_database(db_path: str, schema_path: str) -> None:
     conn = None
     try:
+        conn = get_connection(db_path)
+        if conn.engine == "postgres":
+            ensure_postgres_ready(conn)
+            return
         if not os.path.isfile(db_path):
-            conn = get_connection(db_path)
             with open(schema_path, "r", encoding="utf-8") as f:
                 schema_sql = f.read()
             conn.executescript(schema_sql)
@@ -33,6 +34,8 @@ def run_integrity_check(db_path: str) -> None:
     conn = None
     try:
         conn = get_connection(db_path)
+        if conn.engine == "postgres":
+            return
         cursor = conn.execute("PRAGMA integrity_check;")
         result = cursor.fetchone()
         if result is None or result[0] != "ok":
@@ -68,7 +71,7 @@ _MIGRATIONS = [
 ]
 
 
-def _backfill_task_template_phase_id(conn: sqlite3.Connection) -> None:
+def _backfill_task_template_phase_id(conn: ConnectionWrapper) -> None:
     """
     After 008: backfill task_template.phase_id from property_id (1:1 mapping).
     Create phase(property_id, phase_code=str(property_id)) for each distinct property_id in task_template,
@@ -89,7 +92,7 @@ def _backfill_task_template_phase_id(conn: sqlite3.Connection) -> None:
                 "INSERT INTO phase (property_id, phase_code) VALUES (?, ?)",
                 (pid, phase_code),
             )
-            phase_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            phase_id = conn.inserted_id("phase", "phase_id")
         conn.execute(
             "UPDATE task_template SET phase_id = ? WHERE property_id = ?",
             (phase_id, pid),
@@ -127,7 +130,7 @@ def _backfill_task_template_phase_id(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
-def _backfill_hierarchy(conn: sqlite3.Connection) -> None:
+def _backfill_hierarchy(conn: ConnectionWrapper) -> None:
     """
     After 007: create phase/building rows from existing units and set unit.phase_id, unit.building_id.
     Uses unit_code_norm and domain.unit_identity.parse_unit_parts (already backfilled in 004).
@@ -161,7 +164,7 @@ def _backfill_hierarchy(conn: sqlite3.Connection) -> None:
                 "INSERT INTO phase (property_id, phase_code) VALUES (?, ?)",
                 (pid, phase_code),
             )
-            phase_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            phase_id = conn.inserted_id("phase", "phase_id")
         # Get or create building
         r = conn.execute(
             "SELECT building_id FROM building WHERE phase_id = ? AND building_code = ?",
@@ -174,14 +177,14 @@ def _backfill_hierarchy(conn: sqlite3.Connection) -> None:
                 "INSERT INTO building (phase_id, building_code) VALUES (?, ?)",
                 (phase_id, building_code),
             )
-            building_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            building_id = conn.inserted_id("building", "building_id")
         conn.execute(
             "UPDATE unit SET phase_id = ?, building_id = ? WHERE unit_id = ?",
             (phase_id, building_id, uid),
         )
 
 
-def _backfill_unit_identity(conn: sqlite3.Connection) -> None:
+def _backfill_unit_identity(conn: ConnectionWrapper) -> None:
     """
     Backfill phase_code, building_code, unit_number, unit_identity_key for all units
     using domain.unit_identity. Then recreate unit table with NOT NULL + UNIQUE(property_id, unit_identity_key).
@@ -240,7 +243,7 @@ def _backfill_unit_identity(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
-def _recreate_unit_table(conn: sqlite3.Connection) -> None:
+def _recreate_unit_table(conn: ConnectionWrapper) -> None:
     """Create unit_new with identity columns NOT NULL + UNIQUE(property_id, unit_identity_key), copy from unit, drop, rename."""
     conn.execute(
         """
@@ -288,6 +291,9 @@ def ensure_database_ready(db_path: str) -> None:
 
     conn = get_connection(db_path)
     try:
+        if conn.engine == "postgres":
+            ensure_postgres_ready(conn)
+            return
         # 1) Ensure schema: if turnover table missing, run schema.sql (even if file exists)
         cur = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'turnover' LIMIT 1"

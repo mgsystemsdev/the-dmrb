@@ -1,4 +1,5 @@
-import sqlite3
+from __future__ import annotations
+
 from datetime import datetime
 
 def _row_to_dict(row):
@@ -8,6 +9,15 @@ def _row_to_dict(row):
 
 def _rows_to_dicts(rows):
     return [dict(r) for r in rows]
+
+
+def _inserted_id(conn, table: str, id_column: str, cursor=None) -> int:
+    if hasattr(conn, "inserted_id"):
+        return conn.inserted_id(table, id_column, cursor=cursor)
+    if cursor is not None and getattr(cursor, "lastrowid", None) is not None:
+        return int(cursor.lastrowid)
+    row = conn.execute("SELECT last_insert_rowid()").fetchone()
+    return int(row[0])
 
 # Allowed columns for dynamic UPDATE (avoid injection).
 # When strict=True, update_*_fields raise ValueError on unknown keys.
@@ -104,7 +114,7 @@ def resolve_phase(conn: sqlite3.Connection, *, property_id: int, phase_code: str
         "INSERT INTO phase (property_id, phase_code) VALUES (?, ?)",
         (property_id, phase_code),
     )
-    phase_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    phase_id = _inserted_id(conn, "phase", "phase_id")
     cursor = conn.execute("SELECT * FROM phase WHERE phase_id = ?", (phase_id,))
     return dict(cursor.fetchone())
 
@@ -122,7 +132,7 @@ def resolve_building(conn: sqlite3.Connection, *, phase_id: int, building_code: 
         "INSERT INTO building (phase_id, building_code) VALUES (?, ?)",
         (phase_id, building_code),
     )
-    building_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    building_id = _inserted_id(conn, "building", "building_id")
     cursor = conn.execute("SELECT * FROM building WHERE building_id = ?", (building_id,))
     return dict(cursor.fetchone())
 
@@ -229,7 +239,7 @@ def insert_unit(conn: sqlite3.Connection, data: dict) -> int:
         f"INSERT INTO unit ({col_list}) VALUES ({placeholders})",
         vals,
     )
-    return cursor.lastrowid
+    return _inserted_id(conn, "unit", "unit_id", cursor=cursor)
 
 
 def update_unit_fields(conn: sqlite3.Connection, unit_id: int, fields: dict, *, strict: bool = True) -> None:
@@ -327,7 +337,7 @@ def get_active_task_templates_by_phase(conn: sqlite3.Connection, *, phase_id: in
             (phase_id,),
         )
         return _rows_to_dicts(cursor.fetchall())
-    except sqlite3.OperationalError:
+    except Exception:
         # phase_id column not yet on task_template (pre-008): resolve via phase -> property_id
         row = conn.execute("SELECT property_id FROM phase WHERE phase_id = ?", (phase_id,)).fetchone()
         if row is None:
@@ -393,8 +403,8 @@ def insert_task_template(
                     is_active,
                 ),
             )
-            return cursor.lastrowid
-        except sqlite3.OperationalError:
+            return _inserted_id(conn, "task_template", "template_id", cursor=cursor)
+        except Exception:
             pass
     if property_id is not None:
         cursor = conn.execute(
@@ -413,7 +423,7 @@ def insert_task_template(
                 is_active,
             ),
         )
-        return cursor.lastrowid
+        return _inserted_id(conn, "task_template", "template_id", cursor=cursor)
     raise ValueError("insert_task_template requires phase_id or property_id")
 
 
@@ -578,7 +588,7 @@ def insert_turnover(conn: sqlite3.Connection, data: dict) -> int:
             data.get("availability_status"),
         ),
     )
-    turnover_id = cursor.lastrowid
+    turnover_id = _inserted_id(conn, "turnover", "turnover_id", cursor=cursor)
     _ensure_confirmation_invariant(conn, turnover_id)
     return turnover_id
 
@@ -641,7 +651,7 @@ def insert_task(conn: sqlite3.Connection, data: dict) -> int:
             data["confirmation_status"],
         ),
     )
-    return cursor.lastrowid
+    return _inserted_id(conn, "task", "task_id", cursor=cursor)
 
 
 def update_task_fields(conn: sqlite3.Connection, task_id: int, fields: dict, *, strict: bool = True) -> None:
@@ -686,7 +696,7 @@ def insert_note(conn: sqlite3.Connection, data: dict) -> int:
             data["created_at"],
         ),
     )
-    return cursor.lastrowid
+    return _inserted_id(conn, "note", "note_id", cursor=cursor)
 
 
 def update_note_resolved(conn: sqlite3.Connection, note_id: int, resolved_at: str) -> None:
@@ -742,7 +752,7 @@ def upsert_risk(conn: sqlite3.Connection, data: dict) -> int:
             data.get("auto_resolve", 1),
         ),
     )
-    return cursor.lastrowid
+    return _inserted_id(conn, "risk_flag", "risk_id", cursor=cursor)
 
 
 def _ensure_confirmation_invariant(conn: sqlite3.Connection, turnover_id: int) -> None:
@@ -827,8 +837,8 @@ def insert_sla_event(conn: sqlite3.Connection, data: dict) -> int:
                 data.get("evaluated_threshold_days"),
             ),
         )
-        return cursor.lastrowid
-    except sqlite3.OperationalError:
+        return _inserted_id(conn, "sla_event", "sla_event_id", cursor=cursor)
+    except Exception:
         # Pre-migration schema: sla_event has only (turnover_id, breach_started_at, breach_resolved_at)
         cursor = conn.execute(
             """INSERT INTO sla_event (turnover_id, breach_started_at, breach_resolved_at)
@@ -839,7 +849,7 @@ def insert_sla_event(conn: sqlite3.Connection, data: dict) -> int:
                 data.get("breach_resolved_at"),
             ),
         )
-        return cursor.lastrowid
+        return _inserted_id(conn, "sla_event", "sla_event_id", cursor=cursor)
 
 
 def close_sla_event(conn: sqlite3.Connection, sla_event_id: int, resolved_at: str) -> None:
@@ -855,7 +865,7 @@ def update_sla_event_current_anchor(conn: sqlite3.Connection, sla_event_id: int,
             "UPDATE sla_event SET current_anchor_date = ? WHERE sla_event_id = ?",
             (current_anchor_date, sla_event_id),
         )
-    except sqlite3.OperationalError:
+    except Exception:
         # Pre-migration schema: column does not exist.
         return
 
@@ -874,7 +884,7 @@ def insert_import_batch(conn: sqlite3.Connection, data: dict) -> int:
             data["imported_at"],
         ),
     )
-    return cursor.lastrowid
+    return _inserted_id(conn, "import_batch", "batch_id", cursor=cursor)
 
 
 def get_import_batch_by_checksum(conn: sqlite3.Connection, checksum: str):
@@ -903,7 +913,7 @@ def insert_import_row(conn: sqlite3.Connection, data: dict) -> int:
             data.get("conflict_reason"),
         ),
     )
-    return cursor.lastrowid
+    return _inserted_id(conn, "import_row", "row_id", cursor=cursor)
 
 
 def insert_audit_log(conn: sqlite3.Connection, data: dict) -> int:
@@ -924,4 +934,4 @@ def insert_audit_log(conn: sqlite3.Connection, data: dict) -> int:
             data.get("correlation_id"),
         ),
     )
-    return cursor.lastrowid
+    return _inserted_id(conn, "audit_log", "audit_id", cursor=cursor)

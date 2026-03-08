@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
+from config.settings import get_settings
 from db import connection as db_connection
 from db import repository
 from domain.lifecycle import effective_move_out_date
@@ -25,7 +26,22 @@ AVAILABLE_UNITS = "AVAILABLE_UNITS"
 PENDING_FAS = "PENDING_FAS"
 DMRB = "DMRB"
 
-VALID_PHASES = (5, 7, 8)
+APP_SETTINGS = get_settings()
+VALID_PHASES = tuple(int(p) for p in APP_SETTINGS.allowed_phases if str(p).strip().isdigit())
+
+OUTCOME_APPLIED = "APPLIED"
+OUTCOME_SKIPPED_OVERRIDE = "SKIPPED_OVERRIDE"
+OUTCOME_CONFLICT = "CONFLICT"
+
+
+def _validation_status_from_outcome(outcome: str) -> str:
+    if outcome == OUTCOME_APPLIED:
+        return "OK"
+    if outcome == OUTCOME_SKIPPED_OVERRIDE:
+        return "SKIPPED_OVERRIDE"
+    if outcome == OUTCOME_CONFLICT:
+        return "CONFLICT"
+    return "INVALID"
 
 
 def _sha256_file(report_type: str, file_path: str) -> str:
@@ -383,8 +399,8 @@ def import_report_file(
     conn,
     report_type: str,
     file_path: str,
-    property_id: int = 1,
-    actor: str = "manager",
+    property_id: int = APP_SETTINGS.default_property_id,
+    actor: str = APP_SETTINGS.default_actor,
     correlation_id: Optional[str] = None,
     db_path: Optional[str] = None,
     backup_dir: Optional[str] = None,
@@ -454,7 +470,7 @@ def import_report_file(
             if row.get("move_out_date") is None:
                 _write_import_row(
                     conn, batch_id, row,
-                    validation_status="INVALID",
+                    validation_status=_validation_status_from_outcome("INVALID"),
                     conflict_flag=1,
                     conflict_reason="MOVE_OUT_DATE_MISSING",
                     move_out_date=None,
@@ -466,19 +482,11 @@ def import_report_file(
             unit_id = unit_row["unit_id"]
             open_turnover = _row_to_dict(repository.get_open_turnover_by_unit(conn, unit_id))
             if open_turnover is not None:
+                row_outcome = OUTCOME_APPLIED
                 if open_turnover.get("legal_confirmation_source") is None:
                     existing_move_out = open_turnover["move_out_date"]
-                    if existing_move_out != move_out_iso:
-                        _write_import_row(
-                            conn, batch_id, row,
-                            validation_status="CONFLICT",
-                            conflict_flag=1,
-                            conflict_reason="MOVE_OUT_DATE_MISMATCH_FOR_OPEN_TURNOVER",
-                            move_out_date=move_out_iso,
-                            move_in_date=None,
-                        )
-                        conflict_count += 1
-                        continue
+                else:
+                    existing_move_out = None
                 tid = open_turnover["turnover_id"]
                 override_at = open_turnover.get("move_out_manual_override_at")
                 current_sched = _normalize_date_str(open_turnover.get("scheduled_move_out_date"))
@@ -500,7 +508,19 @@ def import_report_file(
                             "updated_at": now_iso,
                         })
                         _write_skip_audit_if_new(conn, tid, "scheduled_move_out_date", "MOVE_OUTS", incoming_norm, actor, corr_id)
+                        row_outcome = OUTCOME_SKIPPED_OVERRIDE
                 else:
+                    if existing_move_out is not None and existing_move_out != move_out_iso:
+                        _write_import_row(
+                            conn, batch_id, row,
+                            validation_status=_validation_status_from_outcome(OUTCOME_CONFLICT),
+                            conflict_flag=1,
+                            conflict_reason="MOVE_OUT_DATE_MISMATCH_FOR_OPEN_TURNOVER",
+                            move_out_date=move_out_iso,
+                            move_in_date=None,
+                        )
+                        conflict_count += 1
+                        continue
                     repository.update_turnover_fields(conn, tid, {
                         "last_seen_moveout_batch_id": batch_id,
                         "missing_moveout_count": 0,
@@ -510,11 +530,12 @@ def import_report_file(
                 seen_unit_ids_move_outs.add(unit_id)
                 _write_import_row(
                     conn, batch_id, row,
-                    validation_status="OK",
+                    validation_status=_validation_status_from_outcome(row_outcome),
                     move_out_date=move_out_iso,
                     move_in_date=None,
                 )
-                applied_count += 1
+                if row_outcome == OUTCOME_APPLIED:
+                    applied_count += 1
             else:
                 turnover_id = repository.insert_turnover(conn, {
                     "property_id": property_id,
@@ -534,7 +555,7 @@ def import_report_file(
                 seen_unit_ids_move_outs.add(unit_id)
                 _write_import_row(
                     conn, batch_id, row,
-                    validation_status="OK",
+                    validation_status=_validation_status_from_outcome(OUTCOME_APPLIED),
                     move_out_date=move_out_iso,
                     move_in_date=None,
                 )

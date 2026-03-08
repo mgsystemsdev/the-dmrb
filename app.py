@@ -4,16 +4,53 @@ Run from repo root: streamlit run the-dmrb/app.py
 Set COCKPIT_DB_PATH for backend mode (default: the-dmrb/data/cockpit.db).
 Backend-only: app fails visibly if DB/services fail to load.
 """
-import copy
-import json
 import os
-import sqlite3
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import pandas as pd
 import streamlit as st
+from application.commands import (
+    ApplyImportRow,
+    ClearManualOverride,
+    CreateTurnover,
+    UpdateTaskStatus,
+    UpdateTurnoverDates,
+    UpdateTurnoverStatus,
+)
+from application.workflows import (
+    apply_import_row_workflow,
+    clear_manual_override_workflow,
+    create_turnover_workflow,
+    update_task_status_workflow,
+    update_turnover_dates_workflow,
+    update_turnover_status_workflow,
+)
+from config.settings import get_settings
+from ui.actions.db import db_write as ui_db_write, get_conn as ui_get_conn, get_db_path as ui_get_db_path
+from ui.components.sidebar import render_navigation
+from ui.screens.admin import render_admin as render_admin_screen
+from ui.screens.board import render_board as render_board_screen
+from ui.screens.flag_bridge import render_flag_bridge as render_flag_bridge_screen
+from ui.screens.turnover_detail import render_turnover_detail as render_turnover_detail_screen
+from ui.state import (
+    ASSIGNEE_OPTIONS,
+    BLOCK_OPTIONS,
+    BRIDGE_MAP,
+    CONFIRM_LABEL_TO_VALUE,
+    CONFIRM_VALUE_TO_LABEL,
+    DEFAULT_TASK_ASSIGNEES,
+    DEFAULT_TASK_OFFSETS,
+    EXEC_LABEL_TO_VALUE,
+    EXEC_VALUE_TO_LABEL,
+    OFFSET_OPTIONS,
+    STATUS_OPTIONS,
+    TASK_DISPLAY_NAMES,
+    TASK_TYPES_ALL,
+    init_session_state,
+    save_dropdown_config,
+)
 
 # Backend required
 _BACKEND_ERROR = None
@@ -34,44 +71,7 @@ except Exception as _e:
     db_repository = import_service_mod = manual_availability_service_mod = note_service_mod = None
     task_service_mod = turnover_service_mod = unit_master_import_service_mod = None
 
-# UI dropdown/label constants (no mock dependency)
-STATUS_OPTIONS = ["Vacant ready", "Vacant not ready", "On notice"]
-ASSIGNEE_OPTIONS = ["", "Michael", "Brad", "Miguel A", "Roadrunner", "Make Ready Co"]
-BLOCK_OPTIONS = ["Not Blocking", "Key Delivery", "Vendor Delay", "Parts on Order", "Permit Required", "Other"]
-DEFAULT_TASK_ASSIGNEES = {
-    "Insp": {"options": ["Michael", "Miguel A"], "default": "Michael"},
-    "CB": {"options": ["Make Ready Co"], "default": ""},
-    "MRB": {"options": ["Make Ready Co"], "default": "Make Ready Co"},
-    "Paint": {"options": ["Roadrunner"], "default": "Roadrunner"},
-    "MR": {"options": ["Make Ready Co"], "default": "Make Ready Co"},
-    "HK": {"options": ["Brad"], "default": "Brad"},
-    "CC": {"options": ["Brad"], "default": ""},
-    "FW": {"options": ["Michael", "Miguel A"], "default": ""},
-    "QC": {"options": ["Michael", "Miguel A", "Brad"], "default": "Michael"},
-}
-DEFAULT_TASK_OFFSETS = {
-    "Insp": 1, "CB": 2, "MRB": 3, "Paint": 4,
-    "MR": 5, "HK": 6, "CC": 7, "FW": 8, "QC": 9,
-}
-OFFSET_OPTIONS = list(range(1, 31))
-TASK_TYPES_ALL = ["Insp", "CB", "MRB", "Paint", "MR", "HK", "CC", "FW", "QC"]
-TASK_DISPLAY_NAMES = {
-    "Insp": "Inspection", "CB": "Carpet Bid", "MRB": "Make Ready Bid", "Paint": "Paint",
-    "MR": "Make Ready", "HK": "Housekeeping", "CC": "Carpet Clean", "FW": "Final Walk", "QC": "Quality Control",
-}
-EXEC_LABEL_TO_VALUE = {
-    "": None, "Not Started": "NOT_STARTED", "Scheduled": "SCHEDULED", "In Progress": "IN_PROGRESS",
-    "Done": "VENDOR_COMPLETED", "N/A": "NA", "Canceled": "CANCELED",
-}
-EXEC_VALUE_TO_LABEL = {v: k for k, v in EXEC_LABEL_TO_VALUE.items() if v is not None}
-EXEC_VALUE_TO_LABEL[None] = ""
-CONFIRM_LABEL_TO_VALUE = {"Pending": "PENDING", "Confirmed": "CONFIRMED", "Rejected": "REJECTED", "Waived": "WAIVED"}
-CONFIRM_VALUE_TO_LABEL = {v: k for k, v in CONFIRM_LABEL_TO_VALUE.items()}
-BRIDGE_MAP = {
-    "All": None, "Insp Breach": "inspection_sla_breach", "SLA Breach": "sla_breach",
-    "SLA MI Breach": "sla_movein_breach", "Plan Bridge": "plan_breach",
-}
-
+APP_SETTINGS = get_settings()
 
 def _parse_date(s: Optional[str]) -> Optional[date]:
     if not s:
@@ -219,63 +219,24 @@ def _dropdown_config_path():
 
 
 def _load_dropdown_config():
-    """Load dropdown config from JSON file, falling back to hardcoded defaults on first run."""
-    path = _dropdown_config_path()
-    if os.path.exists(path):
-        try:
-            with open(path, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"task_assignees": copy.deepcopy(DEFAULT_TASK_ASSIGNEES), "task_offsets": copy.deepcopy(DEFAULT_TASK_OFFSETS)}
+    return st.session_state.get("dropdown_config", {})
 
 
 def _save_dropdown_config():
-    """Persist current dropdown_config to JSON file."""
-    path = _dropdown_config_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(st.session_state.dropdown_config, f, indent=2)
+    save_dropdown_config(st.session_state.dropdown_config)
 
 
 # ---------------------------------------------------------------------------
 # Session state init
 # ---------------------------------------------------------------------------
 def _init_session_state():
-    if "page" not in st.session_state:
-        st.session_state.page = "dmrb_board"
-    if st.session_state.page in ("add_availability", "import", "dropdown_mgr", "unit_master_import"):
-        st.session_state.page = "admin"
-    if "selected_turnover_id" not in st.session_state:
-        st.session_state.selected_turnover_id = None
-    if "search_unit" not in st.session_state:
-        st.session_state.search_unit = ""
-    if "filter_phase" not in st.session_state:
-        st.session_state.filter_phase = "All"
-    if "filter_status" not in st.session_state:
-        st.session_state.filter_status = "All"
-    if "filter_nvm" not in st.session_state:
-        st.session_state.filter_nvm = "All"
-    if "filter_assignee" not in st.session_state:
-        st.session_state.filter_assignee = "All"
-    if "filter_qc" not in st.session_state:
-        st.session_state.filter_qc = "All"
-    if "breach_filter" not in st.session_state:
-        st.session_state.breach_filter = "All"
-    if "breach_value" not in st.session_state:
-        st.session_state.breach_value = "All"
-    if "dropdown_config" not in st.session_state:
-        st.session_state.dropdown_config = _load_dropdown_config()
-    if "task_offsets" not in st.session_state.dropdown_config:
-        st.session_state.dropdown_config["task_offsets"] = copy.deepcopy(DEFAULT_TASK_OFFSETS)
-    if "enable_db_writes" not in st.session_state:
-        st.session_state.enable_db_writes = False
+    init_session_state()
 
 _init_session_state()
 
 
 def _get_db_path():
-    return os.environ.get("COCKPIT_DB_PATH", os.path.join(os.path.dirname(__file__) or ".", "data", "cockpit.db"))
+    return ui_get_db_path()
 
 
 # Ensure DB is schema-initialized and migrated before any read path
@@ -298,84 +259,16 @@ if _BACKEND_AVAILABLE and turnover_service_mod:
         pass
 
 def _get_conn():
-    if not _BACKEND_AVAILABLE:
-        return None
-    db_path = _get_db_path()
-    try:
-        return get_connection(db_path)
-    except Exception:
-        return None
+    return ui_get_conn(_BACKEND_AVAILABLE)
 
 
 def _db_write(do_write):
-    """When enable_db_writes, run do_write(conn); commit or rollback; close. Returns True if committed, False otherwise."""
-    if not st.session_state.get("enable_db_writes"):
-        return False
-    if not _BACKEND_AVAILABLE or not turnover_service_mod:
-        return False
-    conn = _get_conn()
-    if not conn:
-        st.error("Database not available")
-        return False
-    try:
-        do_write(conn)
-        conn.commit()
-        return True
-    except Exception as e:
-        conn.rollback()
-        st.error(str(e))
-        return False
-    finally:
-        conn.close()
+    return ui_db_write(do_write, backend_available=_BACKEND_AVAILABLE and turnover_service_mod is not None)
 
 EXEC_LABELS = [k for k in EXEC_LABEL_TO_VALUE if k]
 CONFIRM_LABELS = list(CONFIRM_LABEL_TO_VALUE.keys())
 
-# ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
-st.sidebar.title("The DMRB")
-st.sidebar.caption("Apartment Turn Tracker")
-enable_writes = st.sidebar.checkbox(
-    "Enable DB Writes (⚠ irreversible)",
-    value=st.session_state.enable_db_writes,
-    key="enable_db_writes_cb",
-)
-if enable_writes != st.session_state.enable_db_writes:
-    st.session_state.enable_db_writes = enable_writes
-    st.rerun()
-# Navigation
-_nav_labels = [
-    "DMRB Board",
-    "Flag Bridge",
-    "Turnover Detail",
-    "Admin",
-]
-_nav_to_page = {
-    "DMRB Board": "dmrb_board",
-    "Flag Bridge": "flag_bridge",
-    "Turnover Detail": "detail",
-    "Admin": "admin",
-}
-_page_to_nav_index = {v: i for i, v in enumerate(_nav_to_page.values())}
-_page_to_nav_label = {v: k for k, v in _nav_to_page.items()}
-
-# Sync radio value when page was set programmatically (▶, Open, sidebar flags).
-# Use assignment (not del) so Streamlit's internal widget state stays consistent.
-_expected_nav = _page_to_nav_label.get(st.session_state.page, "DMRB Board")
-if "sidebar_nav" in st.session_state and st.session_state.sidebar_nav != _expected_nav:
-    st.session_state["sidebar_nav"] = _expected_nav
-
-def _on_nav_change():
-    st.session_state.page = _nav_to_page.get(st.session_state.sidebar_nav, st.session_state.page)
-
-st.sidebar.radio(
-    "Navigate",
-    _nav_labels,
-    index=_nav_labels.index(_expected_nav),
-    key="sidebar_nav",
-    on_change=_on_nav_change,
-)
+render_navigation(st.session_state.page, st.session_state.enable_db_writes)
 
 # Sidebar: Top flags by category
 st.sidebar.divider()
@@ -399,7 +292,7 @@ else:
             breach_value=None,
             today=date.today(),
         )
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         _all_rows = []
         st.sidebar.error(str(e))
     finally:
@@ -490,7 +383,7 @@ def _get_dmrb_rows():
             filter_qc=st.session_state.filter_qc if st.session_state.filter_qc != "All" else None,
             today=date.today(),
         )
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         st.error(str(e))
         return []
     finally:
@@ -775,26 +668,58 @@ def render_dmrb_board():
         else:
             try:
                 today = date.today()
-                actor = "manager"
+                actor = APP_SETTINGS.default_actor
                 for tid, new_status in status_updates:
-                    turnover_service_mod.set_manual_ready_status(
-                        conn=conn, turnover_id=tid, manual_ready_status=new_status, today=today, actor=actor
+                    update_turnover_status_workflow(
+                        conn,
+                        UpdateTurnoverStatus(
+                            turnover_id=tid,
+                            manual_ready_status=new_status,
+                            today=today,
+                            actor=actor,
+                        ),
                     )
                 for tid, kwargs in date_updates:
-                    turnover_service_mod.update_turnover_dates(
-                        conn=conn, turnover_id=tid, today=today, actor=actor, **kwargs
+                    update_turnover_dates_workflow(
+                        conn,
+                        UpdateTurnoverDates(
+                            turnover_id=tid,
+                            today=today,
+                            actor=actor,
+                            move_out_date=kwargs.get("move_out_date"),
+                            report_ready_date=kwargs.get("report_ready_date"),
+                            move_in_date=kwargs.get("move_in_date"),
+                        ),
                     )
                 for task_id, new_val in task_exec_updates:
-                    task_service_mod.update_task_fields(
-                        conn=conn, task_id=task_id, fields={"execution_status": new_val}, today=today, actor=actor
+                    update_task_status_workflow(
+                        conn,
+                        UpdateTaskStatus(
+                            task_id=task_id,
+                            fields={"execution_status": new_val},
+                            today=today,
+                            actor=actor,
+                        ),
                     )
                 for task_id, new_val in task_confirm_updates:
-                    task_service_mod.update_task_fields(
-                        conn=conn, task_id=task_id, fields={"confirmation_status": new_val}, today=today, actor=actor
+                    update_task_status_workflow(
+                        conn,
+                        UpdateTaskStatus(
+                            task_id=task_id,
+                            fields={"confirmation_status": new_val},
+                            today=today,
+                            actor=actor,
+                        ),
                     )
                 for task_id, new_date in task_date_updates:
-                    task_service_mod.update_task_fields(
-                        conn=conn, task_id=task_id, fields={"vendor_due_date": new_date}, today=today, actor=actor
+                    update_task_status_workflow(
+                        conn,
+                        UpdateTaskStatus(
+                            task_id=task_id,
+                            fields={"vendor_due_date": new_date},
+                            today=today,
+                            actor=actor,
+                        ),
                     )
                 conn.commit()
             except Exception as e:
@@ -831,7 +756,7 @@ def _get_flag_bridge_rows():
             breach_value=st.session_state.breach_value if st.session_state.breach_value != "All" else None,
             today=date.today(),
         )
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         st.error(str(e))
         return []
     finally:
@@ -960,7 +885,7 @@ def render_detail():
                         st.session_state.selected_turnover_id = r["turnover_id"]
                         st.rerun()
                         return
-            except sqlite3.OperationalError as e:
+            except Exception as e:
                 st.error(str(e))
                 return
             finally:
@@ -975,7 +900,7 @@ def render_detail():
         return
     try:
         detail = board_query_service.get_turnover_detail(conn, tid, today=date.today())
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         st.error(str(e))
         return
     finally:
@@ -1035,7 +960,7 @@ def render_detail():
     # PANEL B: STATUS & QC ACTION
     # ===================================================================
     today = date.today()
-    actor = "manager"
+    actor = APP_SETTINGS.default_actor
     _detail_writes = st.session_state.enable_db_writes
     with st.container(border=True):
         s1, s2 = st.columns([2, 1])
@@ -1046,18 +971,34 @@ def render_detail():
                 "Status", STATUS_OPTIONS, index=idx, key="detail_status", disabled=not _detail_writes
             )
             if _detail_writes and new_status != cur_status:
-                if _db_write(lambda c: turnover_service_mod.set_manual_ready_status(
-                    conn=c, turnover_id=tid, manual_ready_status=new_status, today=today, actor=actor
-                )):
+                if _db_write(
+                    lambda c: update_turnover_status_workflow(
+                        c,
+                        UpdateTurnoverStatus(
+                            turnover_id=tid,
+                            manual_ready_status=new_status,
+                            today=today,
+                            actor=actor,
+                        ),
+                    )
+                ):
                     st.rerun()
         with s2:
             st.write("")
             if st.button("✅ Confirm Quality Control", type="primary", use_container_width=True, key="detail_confirm_qc", disabled=not _detail_writes):
                 qc_task = next((task for task in tasks_for_turnover if task.get("task_type") == "QC"), None)
                 if qc_task:
-                    if _db_write(lambda c: task_service_mod.confirm_task(
-                        conn=c, task_id=qc_task["task_id"], today=today, actor=actor
-                    )):
+                    if _db_write(
+                        lambda c: update_task_status_workflow(
+                            c,
+                            UpdateTaskStatus(
+                                task_id=qc_task["task_id"],
+                                fields={"confirmation_status": "CONFIRMED"},
+                                today=today,
+                                actor=actor,
+                            ),
+                        )
+                    ):
                         st.rerun()
 
     # ===================================================================
@@ -1074,9 +1015,17 @@ def render_detail():
                 disabled=not _detail_writes
             )
             if _detail_writes and mo_val is not None and new_mo != mo_val:
-                if _db_write(lambda c: turnover_service_mod.update_turnover_dates(
-                    conn=c, turnover_id=tid, move_out_date=new_mo, today=today, actor=actor
-                )):
+                if _db_write(
+                    lambda c: update_turnover_dates_workflow(
+                        c,
+                        UpdateTurnoverDates(
+                            turnover_id=tid,
+                            move_out_date=new_mo,
+                            today=today,
+                            actor=actor,
+                        ),
+                    )
+                ):
                     st.rerun()
         if dv is not None and dv > 10:
             dt2.markdown(f'**DV**<br><span style="color:#dc3545;font-weight:bold">{dv}</span>', unsafe_allow_html=True)
@@ -1090,9 +1039,17 @@ def render_detail():
                 disabled=not _detail_writes
             )
             if _detail_writes and new_rr is not None and new_rr != rr_val:
-                if _db_write(lambda c: turnover_service_mod.update_turnover_dates(
-                    conn=c, turnover_id=tid, report_ready_date=new_rr, today=today, actor=actor
-                )):
+                if _db_write(
+                    lambda c: update_turnover_dates_workflow(
+                        c,
+                        UpdateTurnoverDates(
+                            turnover_id=tid,
+                            report_ready_date=new_rr,
+                            today=today,
+                            actor=actor,
+                        ),
+                    )
+                ):
                     st.rerun()
         # Move_in + DTBR
         with dt4:
@@ -1102,9 +1059,17 @@ def render_detail():
                 disabled=not _detail_writes
             )
             if _detail_writes and new_mi is not None and new_mi != mi_val:
-                if _db_write(lambda c: turnover_service_mod.update_turnover_dates(
-                    conn=c, turnover_id=tid, move_in_date=new_mi, today=today, actor=actor
-                )):
+                if _db_write(
+                    lambda c: update_turnover_dates_workflow(
+                        c,
+                        UpdateTurnoverDates(
+                            turnover_id=tid,
+                            move_in_date=new_mi,
+                            today=today,
+                            actor=actor,
+                        ),
+                    )
+                ):
                     st.rerun()
         dt5.write(f"**DTBR:** {dtbr if dtbr is not None else '—'}")
 
@@ -1246,15 +1211,13 @@ def render_detail():
                 if cols[5].button("Clear", key=f"clear_override_{ar['_override_key']}"):
                     override_field = ar["_override_key"]
                     def _do_clear(c, field=override_field):
-                        c.execute(
-                            f"UPDATE turnover SET {field} = NULL, updated_at = ? WHERE turnover_id = ?",
-                            (datetime.now(timezone.utc).isoformat(), tid),
-                        )
-                        c.execute(
-                            "INSERT INTO audit_log (entity_type, entity_id, field_name, old_value, new_value, changed_at, actor, source) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                            ("turnover", tid, "manual_override_cleared", field, None,
-                             datetime.now(timezone.utc).isoformat(), actor, "manual"),
+                        clear_manual_override_workflow(
+                            c,
+                            ClearManualOverride(
+                                turnover_id=tid,
+                                override_field=field,
+                                actor=actor,
+                            ),
                         )
                     if _db_write(_do_clear):
                         st.rerun()
@@ -1337,9 +1300,17 @@ def render_detail():
                         disabled=not _detail_writes
                     )
                     if _detail_writes and _normalize_label(new_assignee) != db_assignee:
-                        if _db_write(lambda c: task_service_mod.update_task_fields(
-                            conn=c, task_id=task_id, fields={"assignee": new_assignee or None}, today=today, actor=actor
-                        )):
+                        if _db_write(
+                            lambda c: update_task_status_workflow(
+                                c,
+                                UpdateTaskStatus(
+                                    task_id=task_id,
+                                    fields={"assignee": new_assignee or None},
+                                    today=today,
+                                    actor=actor,
+                                ),
+                            )
+                        ):
                             st.rerun()
                 with tc3:
                     new_due = st.date_input(
@@ -1347,9 +1318,17 @@ def render_detail():
                         format="MM/DD/YYYY", disabled=not _detail_writes
                     )
                     if _detail_writes and new_due != due_val:
-                        if _db_write(lambda c: task_service_mod.update_task_fields(
-                            conn=c, task_id=task_id, fields={"vendor_due_date": new_due}, today=today, actor=actor
-                        )):
+                        if _db_write(
+                            lambda c: update_task_status_workflow(
+                                c,
+                                UpdateTaskStatus(
+                                    task_id=task_id,
+                                    fields={"vendor_due_date": new_due},
+                                    today=today,
+                                    actor=actor,
+                                ),
+                            )
+                        ):
                             st.rerun()
                 with tc4:
                     new_exec = st.selectbox(
@@ -1358,9 +1337,17 @@ def render_detail():
                     )
                     new_exec_val = EXEC_LABEL_TO_VALUE.get(new_exec)
                     if _detail_writes and new_exec_val is not None and _normalize_enum(task.get("execution_status")) != (new_exec_val or "").upper():
-                        if _db_write(lambda c: task_service_mod.update_task_fields(
-                            conn=c, task_id=task_id, fields={"execution_status": new_exec_val}, today=today, actor=actor
-                        )):
+                        if _db_write(
+                            lambda c: update_task_status_workflow(
+                                c,
+                                UpdateTaskStatus(
+                                    task_id=task_id,
+                                    fields={"execution_status": new_exec_val},
+                                    today=today,
+                                    actor=actor,
+                                ),
+                            )
+                        ):
                             st.toast(f"Execution → {new_exec}", icon="✅")
                             st.rerun()
                 with tc5:
@@ -1370,9 +1357,17 @@ def render_detail():
                     )
                     new_conf_val = CONFIRM_LABEL_TO_VALUE.get(new_conf)
                     if _detail_writes and new_conf_val and _normalize_enum(task.get("confirmation_status")) != (new_conf_val or "").upper():
-                        if _db_write(lambda c: task_service_mod.update_task_fields(
-                            conn=c, task_id=task_id, fields={"confirmation_status": new_conf_val}, today=today, actor=actor
-                        )):
+                        if _db_write(
+                            lambda c: update_task_status_workflow(
+                                c,
+                                UpdateTaskStatus(
+                                    task_id=task_id,
+                                    fields={"confirmation_status": new_conf_val},
+                                    today=today,
+                                    actor=actor,
+                                ),
+                            )
+                        ):
                             st.toast(f"Confirmation → {new_conf}", icon="✅")
                             st.rerun()
                 with tc6:
@@ -1382,9 +1377,17 @@ def render_detail():
                         label_visibility="collapsed", disabled=not _detail_writes
                     )
                     if _detail_writes and new_req != req_val:
-                        if _db_write(lambda c: task_service_mod.update_task_fields(
-                            conn=c, task_id=task_id, fields={"required": new_req}, today=today, actor=actor
-                        )):
+                        if _db_write(
+                            lambda c: update_task_status_workflow(
+                                c,
+                                UpdateTaskStatus(
+                                    task_id=task_id,
+                                    fields={"required": new_req},
+                                    today=today,
+                                    actor=actor,
+                                ),
+                            )
+                        ):
                             st.rerun()
                 with tc7:
                     new_block = st.selectbox(
@@ -1392,11 +1395,17 @@ def render_detail():
                         label_visibility="collapsed", disabled=not _detail_writes
                     )
                     if _detail_writes and new_block != cur_block:
-                        if _db_write(lambda c: task_service_mod.update_task_fields(
-                            conn=c, task_id=task_id,
-                            fields={"blocking": new_block != "Not Blocking", "blocking_reason": new_block},
-                            today=today, actor=actor
-                        )):
+                        if _db_write(
+                            lambda c: update_task_status_workflow(
+                                c,
+                                UpdateTaskStatus(
+                                    task_id=task_id,
+                                    fields={"blocking": new_block != "Not Blocking", "blocking_reason": new_block},
+                                    today=today,
+                                    actor=actor,
+                                ),
+                            )
+                        ):
                             st.rerun()
 
     # ===================================================================
@@ -1697,17 +1706,19 @@ def render_add_availability():
                 st.error("Unit is required.")
             else:
                 def do_add(conn):
-                    return manual_availability_service_mod.add_manual_availability(
-                        conn=conn,
-                        property_id=property_id,
-                        phase_code=phase_code,
-                        building_code=building_code,
-                        unit_number=unit_number,
-                        move_out_date=move_out_date,
-                        move_in_date=move_in_date if move_in_date else None,
-                        report_ready_date=report_ready_date if report_ready_date else None,
-                        today=date.today(),
-                        actor="manager",
+                    return create_turnover_workflow(
+                        conn,
+                        CreateTurnover(
+                            property_id=property_id,
+                            phase_code=phase_code,
+                            building_code=building_code,
+                            unit_number=unit_number,
+                            move_out_date=move_out_date,
+                            move_in_date=move_in_date if move_in_date else None,
+                            report_ready_date=report_ready_date if report_ready_date else None,
+                            today=date.today(),
+                            actor=APP_SETTINGS.default_actor,
+                        ),
                     )
                 if _db_write(do_add):
                     st.success("Turnover created. You can open it from the board or detail.")
@@ -1831,12 +1842,14 @@ def render_import():
                     pass
                 return
             try:
-                result = import_service_mod.import_report_file(
-                    conn=conn,
-                    report_type=report_type,
-                    file_path=tmp_path,
-                    property_id=1,
-                    db_path=db_path,
+                result = apply_import_row_workflow(
+                    conn,
+                    ApplyImportRow(
+                        report_type=report_type,
+                        file_path=tmp_path,
+                        property_id=APP_SETTINGS.default_property_id,
+                        db_path=db_path,
+                    ),
                 )
                 conn.commit()
                 status = result.get("status", "SUCCESS")
@@ -1886,12 +1899,12 @@ def render_admin():
 # Main dispatch
 # ---------------------------------------------------------------------------
 if st.session_state.page == "dmrb_board":
-    render_dmrb_board()
+    render_board_screen(render_dmrb_board)
 elif st.session_state.page == "flag_bridge":
-    render_flag_bridge()
+    render_flag_bridge_screen(render_flag_bridge)
 elif st.session_state.page == "detail":
-    render_detail()
+    render_turnover_detail_screen(render_detail)
 elif st.session_state.page == "admin":
-    render_admin()
+    render_admin_screen(render_admin)
 else:
-    render_dmrb_board()
+    render_board_screen(render_dmrb_board)

@@ -108,7 +108,7 @@ pip install -r requirements.txt
 
 ## Setup and Configuration
 
-DMRB can run with the default local SQLite database or a custom database path.
+DMRB supports SQLite by default and can be prepared for Postgres.
 
 ### Default database location
 
@@ -118,7 +118,7 @@ If no environment variable is set, the app uses:
 data/cockpit.db
 ```
 
-### Optional environment variable
+### SQLite environment variables
 
 Set `COCKPIT_DB_PATH` to point to another SQLite file:
 
@@ -134,6 +134,17 @@ On startup, the application will:
 4. Reconcile open turnovers that are missing task rows.
 
 No separate migration command is required for normal local startup.
+
+### Postgres preparation variables
+
+To route runtime connections to Postgres (after running migration):
+
+```bash
+export DB_ENGINE=postgres
+export DATABASE_URL=postgresql://user:password@localhost:5432/dmrb
+```
+
+If `DB_ENGINE` is omitted, DMRB uses SQLite.
 
 ## Running the Application
 
@@ -206,6 +217,25 @@ Run the automated test suite from the repository root:
 ```bash
 pytest -q
 ```
+
+## SQLite to Postgres Migration (Phase 3 prep)
+
+The repository now includes a one-command migration workflow:
+
+```bash
+python -m scripts.migrate_to_postgres \
+  --sqlite-path data/cockpit.db \
+  --postgres-url postgresql://user:password@localhost:5432/dmrb
+```
+
+This command:
+
+1. Applies Postgres schema bootstrap.
+2. Exports SQLite data to structured JSON.
+3. Imports the data into Postgres.
+4. Verifies record counts, key entities, and required-field parity.
+
+See [Postgres Migration Guide](docs/POSTGRES_MIGRATION.md) for the full checklist.
 
 At the time of review, the suite does not fully pass in the current repository state. The README instructions above reflect the intended test command, but the codebase currently has failing tests around enrichment parity and some turnover/manual-override schema paths.
 

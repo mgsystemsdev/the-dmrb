@@ -1,11 +1,14 @@
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from config.settings import get_settings
 from db import repository
 from domain.lifecycle import effective_move_out_date
 from services import import_service
 from services.risk_service import reconcile_risks_for_turnover
 from services.sla_service import reconcile_sla_for_turnover
+
+DEFAULT_ACTOR = get_settings().default_actor
 
 
 def _now_iso() -> str:
@@ -71,7 +74,7 @@ def create_turnover_and_reconcile(
     move_in_date: Optional[date] = None,
     report_ready_date: Optional[date] = None,
     today: date,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> int:
     """
     Create one open turnover, instantiate tasks from templates, run SLA and risk reconciliation.
@@ -160,7 +163,7 @@ def set_manual_ready_status(
     turnover_id: int,
     manual_ready_status: str,
     today: date,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> None:
     row = _get_turnover(conn, turnover_id)
     old_status = row["manual_ready_status"]
@@ -210,7 +213,7 @@ def confirm_manual_ready(
     conn,
     turnover_id: int,
     today: date,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> None:
     row = _get_turnover(conn, turnover_id)
     old_value = row["manual_ready_confirmed_at"]
@@ -263,7 +266,7 @@ def update_wd_panel(
     wd_present_type: Optional[str] = None,
     wd_supervisor_notified: Optional[bool] = None,
     wd_installed: Optional[bool] = None,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> None:
     row = _get_turnover(conn, turnover_id)
     now_iso = _now_iso()
@@ -323,7 +326,7 @@ def update_turnover_dates(
     report_ready_date: Optional[date] = None,
     move_in_date: Optional[date] = None,
     today: Optional[date] = None,
-    actor: str = "manager",
+    actor: str = DEFAULT_ACTOR,
 ) -> None:
     """Update turnover date fields; audit each change; always run SLA and risk reconciliation."""
     row = _get_turnover(conn, turnover_id)

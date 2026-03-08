@@ -9,28 +9,42 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from db.connection import get_connection
 from db import repository
+from domain import unit_identity
 from services import task_service, turnover_service
+from tests.helpers.db_bootstrap import bootstrap_runtime_db
 
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "..", "db", "schema.sql")
 MIGRATION_PATH = os.path.join(os.path.dirname(__file__), "..", "db", "migrations", "002_add_exposure_risk_type.sql")
 
 
 def _fresh_db():
-    """In-memory DB from canonical schema."""
-    conn = sqlite3.connect(":memory:")
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.row_factory = sqlite3.Row
-    with open(SCHEMA_PATH) as f:
-        conn.executescript(f.read())
-    return conn
+    """Runtime-initialized DB (schema + migrations)."""
+    return bootstrap_runtime_db()
+
+
+def _dispose_db(conn, db_path: str):
+    conn.close()
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 def _seed(conn):
     """Insert minimal property + unit + turnover + tasks for testing."""
     conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'Test Prop')")
-    conn.execute(
-        """INSERT INTO unit (unit_id, property_id, unit_code_raw, unit_code_norm)
-           VALUES (1, 1, '101', '101')"""
+    unit_code = "5-1-101"
+    phase_code, building_code, unit_number = unit_identity.parse_unit_parts(unit_code)
+    unit_key = unit_identity.compose_identity_key(phase_code, building_code, unit_number)
+    unit_row = repository.resolve_unit(
+        conn,
+        property_id=1,
+        phase_code=phase_code,
+        building_code=building_code,
+        unit_number=unit_number,
+        unit_code_raw=unit_code,
+        unit_code_norm=unit_code,
+        unit_identity_key=unit_key,
     )
     now = datetime.utcnow().isoformat()
     mo = (date.today() - timedelta(days=15)).isoformat()
@@ -41,8 +55,8 @@ def _seed(conn):
            (turnover_id, property_id, unit_id, source_turnover_key,
             move_out_date, move_in_date, report_ready_date,
             created_at, updated_at)
-           VALUES (1, 1, 1, 'test:101:mo', ?, ?, ?, ?, ?)""",
-        (mo, mi, rr, now, now),
+           VALUES (1, 1, ?, 'test:101:mo', ?, ?, ?, ?, ?)""",
+        (unit_row["unit_id"], mo, mi, rr, now, now),
     )
     # QC task — NOT_STARTED
     conn.execute(
@@ -67,13 +81,25 @@ def _seed(conn):
 # ---------- 1. Schema: EXPOSURE_RISK accepted ----------
 
 def test_exposure_risk_insert():
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     now = datetime.utcnow().isoformat()
     conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'P')")
-    conn.execute("INSERT INTO unit (unit_id, property_id, unit_code_raw, unit_code_norm) VALUES (1,1,'A','a')")
+    unit_code = "5-A-101"
+    phase_code, building_code, unit_number = unit_identity.parse_unit_parts(unit_code)
+    unit_key = unit_identity.compose_identity_key(phase_code, building_code, unit_number)
+    unit_row = repository.resolve_unit(
+        conn,
+        property_id=1,
+        phase_code=phase_code,
+        building_code=building_code,
+        unit_number=unit_number,
+        unit_code_raw=unit_code,
+        unit_code_norm=unit_code,
+        unit_identity_key=unit_key,
+    )
     conn.execute(
-        "INSERT INTO turnover (turnover_id, property_id, unit_id, source_turnover_key, move_out_date, created_at, updated_at) VALUES (1,1,1,'k','2025-01-01',?,?)",
-        (now, now),
+        "INSERT INTO turnover (turnover_id, property_id, unit_id, source_turnover_key, move_out_date, created_at, updated_at) VALUES (1,1,?,'k','2025-01-01',?,?)",
+        (unit_row["unit_id"], now, now),
     )
     # This INSERT would fail on the old schema (missing EXPOSURE_RISK in CHECK)
     conn.execute(
@@ -82,7 +108,7 @@ def test_exposure_risk_insert():
     )
     row = conn.execute("SELECT risk_type FROM risk_flag WHERE turnover_id = 1").fetchone()
     assert row["risk_type"] == "EXPOSURE_RISK"
-    conn.close()
+    _dispose_db(conn, db_path)
     print("PASS test_exposure_risk_insert")
 
 
@@ -134,7 +160,8 @@ def test_migration_preserves_data():
 # ---------- 3. Risk reconciliation after task changes ----------
 
 def test_mark_vendor_completed_reconciles_risks():
-    conn = _seed(_fresh_db())
+    conn, db_path = _fresh_db()
+    conn = _seed(conn)
     today = date.today()
     # Paint task (id=2) is overdue → EXECUTION_OVERDUE should exist after reconcile
     task_service.mark_vendor_completed(conn=conn, task_id=2, today=today)
@@ -143,12 +170,13 @@ def test_mark_vendor_completed_reconciles_risks():
     # EXECUTION_OVERDUE should be resolved (Paint now completed), QC_RISK should appear (move_in ≤ 3)
     assert "EXECUTION_OVERDUE" not in risks, f"EXECUTION_OVERDUE should be resolved, got {risks}"
     assert "QC_RISK" in risks, f"QC_RISK should be active, got {risks}"
-    conn.close()
+    _dispose_db(conn, db_path)
     print("PASS test_mark_vendor_completed_reconciles_risks")
 
 
 def test_confirm_task_reconciles_risks():
-    conn = _seed(_fresh_db())
+    conn, db_path = _fresh_db()
+    conn = _seed(conn)
     today = date.today()
     # First mark QC vendor completed, then confirm
     task_service.mark_vendor_completed(conn=conn, task_id=1, today=today)
@@ -156,12 +184,13 @@ def test_confirm_task_reconciles_risks():
     conn.commit()
     risks = [r["risk_type"] for r in repository.get_active_risks_by_turnover(conn, 1)]
     assert "QC_RISK" not in risks, f"QC_RISK should be resolved after confirm, got {risks}"
-    conn.close()
+    _dispose_db(conn, db_path)
     print("PASS test_confirm_task_reconciles_risks")
 
 
 def test_reject_task_reconciles_risks():
-    conn = _seed(_fresh_db())
+    conn, db_path = _fresh_db()
+    conn = _seed(conn)
     today = date.today()
     task_service.mark_vendor_completed(conn=conn, task_id=1, today=today)
     task_service.confirm_task(conn=conn, task_id=1, today=today)
@@ -170,14 +199,15 @@ def test_reject_task_reconciles_risks():
     risks = [r["risk_type"] for r in repository.get_active_risks_by_turnover(conn, 1)]
     # QC_RISK should reappear after rejection (execution reset to IN_PROGRESS)
     assert "QC_RISK" in risks, f"QC_RISK should reappear after reject, got {risks}"
-    conn.close()
+    _dispose_db(conn, db_path)
     print("PASS test_reject_task_reconciles_risks")
 
 
 # ---------- 4. SLA reconciliation from set_manual_ready_status ----------
 
 def test_set_manual_ready_status_triggers_sla():
-    conn = _seed(_fresh_db())
+    conn, db_path = _fresh_db()
+    conn = _seed(conn)
     today = date.today()
     # Move-out 15 days ago, no manual_ready_confirmed_at → SLA breach should open
     turnover_service.set_manual_ready_status(
@@ -186,14 +216,15 @@ def test_set_manual_ready_status_triggers_sla():
     conn.commit()
     sla = conn.execute("SELECT * FROM sla_event WHERE turnover_id = 1 AND breach_resolved_at IS NULL").fetchone()
     assert sla is not None, "SLA breach should have been opened"
-    conn.close()
+    _dispose_db(conn, db_path)
     print("PASS test_set_manual_ready_status_triggers_sla")
 
 
 # ---------- 5. wd_installed support ----------
 
 def test_wd_installed_sets_timestamp():
-    conn = _seed(_fresh_db())
+    conn, db_path = _fresh_db()
+    conn = _seed(conn)
     today = date.today()
     turnover_service.update_wd_panel(conn=conn, turnover_id=1, today=today, wd_installed=True)
     conn.commit()
@@ -205,26 +236,28 @@ def test_wd_installed_sets_timestamp():
         "SELECT * FROM audit_log WHERE entity_id = 1 AND field_name = 'wd_installed'"
     ).fetchall()
     assert len(audits) == 1
-    conn.close()
+    _dispose_db(conn, db_path)
     print("PASS test_wd_installed_sets_timestamp")
 
 
 def test_wd_installed_no_timestamp_on_false():
-    conn = _seed(_fresh_db())
+    conn, db_path = _fresh_db()
+    conn = _seed(conn)
     today = date.today()
     turnover_service.update_wd_panel(conn=conn, turnover_id=1, today=today, wd_installed=False)
     conn.commit()
     row = repository.get_turnover_by_id(conn, 1)
     assert row["wd_installed"] == 0
     assert row["wd_installed_at"] is None, "wd_installed_at should remain None when set to False"
-    conn.close()
+    _dispose_db(conn, db_path)
     print("PASS test_wd_installed_no_timestamp_on_false")
 
 
 # ---------- 6. EXPOSURE_RISK end-to-end ----------
 
 def test_exposure_risk_reconciled():
-    conn = _seed(_fresh_db())
+    conn, db_path = _fresh_db()
+    conn = _seed(conn)
     today = date.today()
     # report_ready_date is yesterday, no manual_ready_confirmed_at → EXPOSURE_RISK
     turnover_service.set_manual_ready_status(
@@ -233,7 +266,7 @@ def test_exposure_risk_reconciled():
     conn.commit()
     risks = [r["risk_type"] for r in repository.get_active_risks_by_turnover(conn, 1)]
     assert "EXPOSURE_RISK" in risks, f"EXPOSURE_RISK should be active, got {risks}"
-    conn.close()
+    _dispose_db(conn, db_path)
     print("PASS test_exposure_risk_reconciled")
 
 

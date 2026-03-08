@@ -11,28 +11,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from db.connection import ensure_database_ready, get_connection
 from db import repository
+from domain import unit_identity
 from services import import_service, turnover_service
-
-SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "..", "db", "schema.sql")
-MIG_009 = os.path.join(os.path.dirname(__file__), "..", "db", "migrations", "009_add_legal_and_availability_columns.sql")
-MIG_010 = os.path.join(os.path.dirname(__file__), "..", "db", "migrations", "010_add_sla_event_anchor_snapshot.sql")
-MIG_011 = os.path.join(os.path.dirname(__file__), "..", "db", "migrations", "011_add_manual_override_timestamps.sql")
+from tests.helpers.db_bootstrap import bootstrap_runtime_db
 
 
 def _fresh_db():
-    """In-memory DB with schema + 009/010/011 (no phase/building; for AVAILABLE_UNITS/PENDING_MOVE_INS only)."""
-    conn = sqlite3.connect(":memory:")
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.row_factory = sqlite3.Row
-    with open(SCHEMA_PATH) as f:
-        conn.executescript(f.read())
-    with open(MIG_009) as f:
-        conn.executescript(f.read())
-    with open(MIG_010) as f:
-        conn.executescript(f.read())
-    with open(MIG_011) as f:
-        conn.executescript(f.read())
-    return conn
+    """Runtime-initialized DB for override behavior tests."""
+    return bootstrap_runtime_db()
+
+
+def _dispose_db(conn, db_path: str):
+    conn.close()
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 def _db_path():
@@ -44,16 +38,25 @@ def _db_path():
 def _seed_unit_and_turnover(conn, unit_code: str, move_out_iso: str, report_ready_iso: str = None, move_in_iso: str = None):
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     conn.execute("INSERT OR IGNORE INTO property (property_id, name) VALUES (1, 'P')")
-    conn.execute(
-        "INSERT OR IGNORE INTO unit (unit_id, property_id, unit_code_raw, unit_code_norm) VALUES (1, 1, ?, ?)",
-        (unit_code, unit_code),
+    phase_code, building_code, unit_number = unit_identity.parse_unit_parts(unit_code)
+    unit_key = unit_identity.compose_identity_key(phase_code, building_code, unit_number)
+    unit_row = repository.resolve_unit(
+        conn,
+        property_id=1,
+        phase_code=phase_code,
+        building_code=building_code,
+        unit_number=unit_number,
+        unit_code_raw=unit_code,
+        unit_code_norm=unit_code,
+        unit_identity_key=unit_key,
     )
+    unit_id = unit_row["unit_id"]
     conn.execute(
         """INSERT INTO turnover
            (turnover_id, property_id, unit_id, source_turnover_key, move_out_date, report_ready_date, move_in_date,
-            created_at, updated_at, scheduled_move_out_date)
-           VALUES (1, 1, 1, 'k1', ?, ?, ?, ?, ?, ?)""",
-        (move_out_iso, report_ready_iso, move_in_iso, now, now, move_out_iso),
+            created_at, updated_at, scheduled_move_out_date, move_out_manual_override_at)
+           VALUES (1, 1, ?, 'k1', ?, ?, ?, ?, ?, ?, NULL)""",
+        (unit_id, move_out_iso, report_ready_iso, move_in_iso, now, now, move_out_iso),
     )
     conn.commit()
 
@@ -62,7 +65,7 @@ def _seed_unit_and_turnover(conn, unit_code: str, move_out_iso: str, report_read
 
 def test_manual_ready_date_then_import_different_does_not_overwrite():
     """Manual edit report_ready_date → import with different ready_date → import does not overwrite."""
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     unit_code = "5-A-101"
     _seed_unit_and_turnover(conn, unit_code, "2025-01-15", report_ready_iso="2025-02-01", move_in_iso=None)
     today = date.today()
@@ -95,12 +98,12 @@ def test_manual_ready_date_then_import_different_does_not_overwrite():
     ).fetchall()
     assert len(skip_audits) == 1
     assert "report_ready_date" in (skip_audits[0]["new_value"] or "")
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_manual_ready_date_then_import_matching_clears_override():
     """Manual edit report_ready_date → later import matches same value → override cleared."""
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     unit_code = "5-A-102"
     _seed_unit_and_turnover(conn, unit_code, "2025-01-15", report_ready_iso="2025-02-01", move_in_iso=None)
     today = date.today()
@@ -130,12 +133,12 @@ def test_manual_ready_date_then_import_matching_clears_override():
         "SELECT * FROM audit_log WHERE entity_id = 1 AND field_name = 'manual_override_cleared' AND new_value LIKE '%report_ready_date%'"
     ).fetchall()
     assert len(cleared) == 1
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_manual_move_in_date_then_import_different_does_not_overwrite():
     """Manual edit move_in_date → import with different move_in_date → import does not overwrite."""
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     unit_code = "5-A-201"
     _seed_unit_and_turnover(conn, unit_code, "2025-01-15", report_ready_iso=None, move_in_iso="2025-03-01")
     today = date.today()
@@ -167,12 +170,12 @@ def test_manual_move_in_date_then_import_different_does_not_overwrite():
         "SELECT * FROM audit_log WHERE entity_id = 1 AND field_name = 'import_skipped_due_to_manual_override' AND new_value LIKE '%move_in_date%'"
     ).fetchall()
     assert len(skip_audits) == 1
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_manual_move_in_date_then_import_matching_clears_override():
     """Manual edit move_in_date → later import matches same value → override cleared."""
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     unit_code = "5-A-202"
     _seed_unit_and_turnover(conn, unit_code, "2025-01-15", report_ready_iso=None, move_in_iso="2025-03-01")
     today = date.today()
@@ -202,7 +205,7 @@ def test_manual_move_in_date_then_import_matching_clears_override():
         "SELECT * FROM audit_log WHERE entity_id = 1 AND field_name = 'manual_override_cleared' AND new_value LIKE '%move_in_date%'"
     ).fetchall()
     assert len(cleared) == 1
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_scheduled_move_out_override_skip_and_clear():
@@ -353,7 +356,7 @@ def test_skip_scheduled_move_out_does_not_trigger_sla_reconcile():
 
 def test_availability_status_override_skip_and_clear():
     """availability_status follows same override pattern: manual status → feed mismatch skips; feed match clears."""
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     unit_code = "5-A-101"
     _seed_unit_and_turnover(conn, unit_code, "2025-01-15", report_ready_iso="2025-02-01", move_in_iso=None)
     today = date.today()
@@ -426,12 +429,12 @@ def test_availability_status_override_skip_and_clear():
         "SELECT * FROM audit_log WHERE entity_id = 1 AND field_name = 'manual_override_cleared' AND new_value LIKE '%availability_status%'"
     ).fetchall()
     assert len(cleared) >= 1
-    conn.close()
+    _dispose_db(conn, db_path)
 
 
 def test_two_identical_imports_with_override_active_only_one_skip_audit():
     """Two consecutive identical imports while override active: only one skip audit row for that field+value."""
-    conn = _fresh_db()
+    conn, db_path = _fresh_db()
     unit_code = "5-A-101"
     _seed_unit_and_turnover(conn, unit_code, "2025-01-15", report_ready_iso="2025-02-01", move_in_iso=None)
     today = date.today()
@@ -479,4 +482,4 @@ def test_two_identical_imports_with_override_active_only_one_skip_audit():
              AND new_value LIKE 'report_ready_date|%'"""
     ).fetchall()
     assert len(skip_audits) == 1, "Expected exactly one skip audit for same field+value across two identical imports"
-    conn.close()
+    _dispose_db(conn, db_path)

@@ -15,7 +15,6 @@ from domain.lifecycle import (
     STABILIZATION,
     VACANT,
     derive_lifecycle_phase,
-    derive_nvm,
     effective_move_out_date,
 )
 
@@ -50,6 +49,17 @@ def business_days(start: Any, end: Any) -> Optional[int]:
     return count
 
 
+def _derive_nvm_short(phase: str) -> str:
+    """Match the legacy board contract used by harness tests (N/V/M)."""
+    if phase in (NOTICE, NOTICE_SMI):
+        return "N"
+    if phase == VACANT:
+        return "V"
+    if phase in (SMI, MOVE_IN_COMPLETE, STABILIZATION):
+        return "M"
+    return "—"
+
+
 def derive_phase(t: dict, today: date) -> str:
     """Phase: preserve mock behavior when move_out_date is None; otherwise use domain.lifecycle.derive_lifecycle_phase."""
     move_out = _parse_date(t.get("move_out_date"))
@@ -79,8 +89,8 @@ def compute_facts(row: dict, today: date) -> dict:
     task_mrb = row.get("task_mrb") or {}
     task_fw = row.get("task_fw") or {}
 
-    dv = (today - move_out).days if move_out and today >= move_out else None
-    dtbr = (move_in - today).days if move_in else None
+    dv = business_days(move_out, today) if move_out else None
+    dtbr = business_days(today, move_in) if move_in else None
     phase = derive_phase(
         {
             "move_out_date": move_out,
@@ -90,7 +100,7 @@ def compute_facts(row: dict, today: date) -> dict:
         },
         today,
     )
-    nvm = derive_nvm(phase)
+    nvm = _derive_nvm_short(phase)
 
     is_vacant = phase == VACANT
     is_smi = phase in (SMI, MOVE_IN_COMPLETE, STABILIZATION)
