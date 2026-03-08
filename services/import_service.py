@@ -17,6 +17,8 @@ from db import connection as db_connection
 from db import repository
 from domain.lifecycle import effective_move_out_date
 from domain import unit_identity
+from imports.validation.file_validator import validate_import_file
+from imports.validation.schema_validator import validate_import_schema
 from services.sla_service import reconcile_sla_for_turnover
 
 # Report type constants (exact strings for v1)
@@ -269,6 +271,26 @@ def _write_import_row(
     })
 
 
+def _append_diagnostic(
+    diagnostics: list[dict[str, Any]],
+    *,
+    row_index: int,
+    error_type: str,
+    error_message: str,
+    column: Optional[str] = None,
+    suggestion: Optional[str] = None,
+) -> None:
+    diagnostics.append(
+        {
+            "row_index": row_index,
+            "error_type": error_type,
+            "error_message": error_message,
+            "column": column,
+            "suggestion": suggestion,
+        }
+    )
+
+
 def _audit(
     conn,
     turnover_id: int,
@@ -422,9 +444,12 @@ def import_report_file(
             "applied_count": 0,
             "conflict_count": 0,
             "invalid_count": 0,
+            "diagnostics": [],
         }
 
     try:
+        validate_import_file(report_type, file_path)
+        validate_import_schema(report_type, file_path)
         if report_type == MOVE_OUTS:
             rows = _parse_move_outs(file_path)
         elif report_type == PENDING_MOVE_INS:
@@ -462,12 +487,21 @@ def import_report_file(
     applied_count = 0
     conflict_count = 0
     invalid_count = 0
+    diagnostics: list[dict[str, Any]] = []
     seen_unit_ids_move_outs: set[int] = set()
 
     if report_type == MOVE_OUTS:
-        for row in rows:
+        for row_index, row in enumerate(rows, start=1):
             move_out_iso = _to_iso_date(row.get("move_out_date"))
             if row.get("move_out_date") is None:
+                _append_diagnostic(
+                    diagnostics,
+                    row_index=row_index,
+                    column="Move-Out Date",
+                    error_type="MISSING_REQUIRED_FIELD",
+                    error_message="Missing required field 'Move-Out Date'.",
+                    suggestion="Populate a valid move-out date (YYYY-MM-DD).",
+                )
                 _write_import_row(
                     conn, batch_id, row,
                     validation_status=_validation_status_from_outcome("INVALID"),
@@ -511,6 +545,14 @@ def import_report_file(
                         row_outcome = OUTCOME_SKIPPED_OVERRIDE
                 else:
                     if existing_move_out is not None and existing_move_out != move_out_iso:
+                        _append_diagnostic(
+                            diagnostics,
+                            row_index=row_index,
+                            column="Move-Out Date",
+                            error_type="CONFLICT",
+                            error_message="Move-out date does not match existing open turnover.",
+                            suggestion="Review source data and existing turnover move-out date before retrying.",
+                        )
                         _write_import_row(
                             conn, batch_id, row,
                             validation_status=_validation_status_from_outcome(OUTCOME_CONFLICT),
@@ -562,9 +604,17 @@ def import_report_file(
                 applied_count += 1
 
     elif report_type == PENDING_MOVE_INS:
-        for row in rows:
+        for row_index, row in enumerate(rows, start=1):
             unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=row["unit_norm"])
             if unit_row is None:
+                _append_diagnostic(
+                    diagnostics,
+                    row_index=row_index,
+                    column="Unit",
+                    error_type="UNKNOWN_UNIT_REFERENCE",
+                    error_message="Unit was not found for pending move-in row.",
+                    suggestion="Ensure the unit exists and has an open turnover before importing.",
+                )
                 _write_import_row(
                     conn, batch_id, row,
                     validation_status="CONFLICT",
@@ -578,6 +628,14 @@ def import_report_file(
             unit_id = unit_row["unit_id"]
             open_turnover = _row_to_dict(repository.get_open_turnover_by_unit(conn, unit_id))
             if open_turnover is None:
+                _append_diagnostic(
+                    diagnostics,
+                    row_index=row_index,
+                    column="Unit",
+                    error_type="UNKNOWN_UNIT_REFERENCE",
+                    error_message="No open turnover found for pending move-in row.",
+                    suggestion="Verify unit identity and open turnover state, then retry import.",
+                )
                 _write_import_row(
                     conn, batch_id, row,
                     validation_status="CONFLICT",
@@ -620,9 +678,17 @@ def import_report_file(
                 )
 
     elif report_type == PENDING_FAS:
-        for row in rows:
+        for row_index, row in enumerate(rows, start=1):
             unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=row["unit_norm"])
             if unit_row is None:
+                _append_diagnostic(
+                    diagnostics,
+                    row_index=row_index,
+                    column="Unit",
+                    error_type="UNKNOWN_UNIT_REFERENCE",
+                    error_message="Unit was not found for pending FAS row.",
+                    suggestion="Ensure the unit exists and has an open turnover before importing.",
+                )
                 _write_import_row(
                     conn, batch_id, row,
                     validation_status="IGNORED",
@@ -634,6 +700,14 @@ def import_report_file(
             unit_id = unit_row["unit_id"]
             open_turnover = _row_to_dict(repository.get_open_turnover_by_unit(conn, unit_id))
             if open_turnover is None:
+                _append_diagnostic(
+                    diagnostics,
+                    row_index=row_index,
+                    column="Unit",
+                    error_type="UNKNOWN_UNIT_REFERENCE",
+                    error_message="No open turnover found for pending FAS row.",
+                    suggestion="Verify unit identity and open turnover state, then retry import.",
+                )
                 _write_import_row(
                     conn, batch_id, row,
                     validation_status="IGNORED",
@@ -687,10 +761,18 @@ def import_report_file(
                 )
 
     elif report_type in (AVAILABLE_UNITS, DMRB):
-        for row in rows:
+        for row_index, row in enumerate(rows, start=1):
             ready_iso = _to_iso_date(row.get("report_ready_date"))
             unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=row["unit_norm"])
             if unit_row is None:
+                _append_diagnostic(
+                    diagnostics,
+                    row_index=row_index,
+                    column="Unit",
+                    error_type="UNKNOWN_UNIT_REFERENCE",
+                    error_message="Unit was not found for ready-date import row.",
+                    suggestion="Ensure the unit exists and has an open turnover before importing.",
+                )
                 _write_import_row(
                     conn, batch_id, row,
                     validation_status="IGNORED",
@@ -702,6 +784,14 @@ def import_report_file(
             unit_id = unit_row["unit_id"]
             open_turnover = _row_to_dict(repository.get_open_turnover_by_unit(conn, unit_id))
             if open_turnover is None:
+                _append_diagnostic(
+                    diagnostics,
+                    row_index=row_index,
+                    column="Unit",
+                    error_type="UNKNOWN_UNIT_REFERENCE",
+                    error_message="No open turnover found for ready-date import row.",
+                    suggestion="Verify unit identity and open turnover state, then retry import.",
+                )
                 _write_import_row(
                     conn, batch_id, row,
                     validation_status="IGNORED",
@@ -826,4 +916,5 @@ def import_report_file(
         "applied_count": applied_count,
         "conflict_count": conflict_count,
         "invalid_count": invalid_count,
+        "diagnostics": diagnostics,
     }

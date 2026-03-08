@@ -15,10 +15,11 @@ def render_navigation(current_page: str, enable_writes: bool) -> str:
         st.session_state.enable_db_writes = sidebar_writes
         st.rerun()
 
-    nav_labels = ["DMRB Board", "Flag Bridge", "Turnover Detail", "Admin"]
+    nav_labels = ["DMRB Board", "Flag Bridge", "Risk Radar", "Turnover Detail", "Admin"]
     nav_to_page = {
         "DMRB Board": "dmrb_board",
         "Flag Bridge": "flag_bridge",
+        "Risk Radar": "risk_radar",
         "Turnover Detail": "detail",
         "Admin": "admin",
     }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 
 def _row_to_dict(row):
     if row is None:
@@ -18,6 +19,64 @@ def _inserted_id(conn, table: str, id_column: str, cursor=None) -> int:
         return int(cursor.lastrowid)
     row = conn.execute("SELECT last_insert_rowid()").fetchone()
     return int(row[0])
+
+
+def invalidate_turnover_enrichment_cache(conn, turnover_id: int) -> None:
+    """Best-effort cache invalidation for one turnover."""
+    try:
+        conn.execute(
+            "DELETE FROM turnover_enrichment_cache WHERE turnover_id = ?",
+            (turnover_id,),
+        )
+    except Exception:
+        # Cache is an optimization; never break writes.
+        return
+
+
+def get_enrichment_cache_for_turnover_ids(conn, turnover_ids: list[int], *, as_of_date: str) -> dict[int, dict]:
+    """Return {turnover_id: cached_enriched_fields} for rows matching as_of_date."""
+    if not turnover_ids:
+        return {}
+    unique_ids = list(dict.fromkeys(x for x in turnover_ids if x is not None))
+    if not unique_ids:
+        return {}
+    placeholders = ",".join("?" * len(unique_ids))
+    try:
+        rows = conn.execute(
+            f"""SELECT turnover_id, cache_payload FROM turnover_enrichment_cache
+                WHERE turnover_id IN ({placeholders}) AND as_of_date = ?""",
+            unique_ids + [as_of_date],
+        ).fetchall()
+    except Exception:
+        return {}
+    out: dict[int, dict] = {}
+    for row in rows:
+        try:
+            payload = json.loads(row["cache_payload"] or "{}")
+        except Exception:
+            payload = {}
+        if isinstance(payload, dict):
+            out[row["turnover_id"]] = payload
+    return out
+
+
+def upsert_turnover_enrichment_cache(conn, *, turnover_id: int, as_of_date: str, payload: dict) -> None:
+    """Store enrichment payload for turnover and date."""
+    now_iso = datetime.utcnow().isoformat()
+    payload_json = json.dumps(payload or {}, separators=(",", ":"), sort_keys=True)
+    try:
+        conn.execute(
+            """INSERT INTO turnover_enrichment_cache (turnover_id, as_of_date, cache_payload, refreshed_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(turnover_id) DO UPDATE SET
+                 as_of_date = excluded.as_of_date,
+                 cache_payload = excluded.cache_payload,
+                 refreshed_at = excluded.refreshed_at""",
+            (turnover_id, as_of_date, payload_json, now_iso),
+        )
+    except Exception:
+        # Cache is an optimization; never break reads/writes.
+        return
 
 # Allowed columns for dynamic UPDATE (avoid injection).
 # When strict=True, update_*_fields raise ValueError on unknown keys.
@@ -590,6 +649,7 @@ def insert_turnover(conn: sqlite3.Connection, data: dict) -> int:
     )
     turnover_id = _inserted_id(conn, "turnover", "turnover_id", cursor=cursor)
     _ensure_confirmation_invariant(conn, turnover_id)
+    invalidate_turnover_enrichment_cache(conn, turnover_id)
     return turnover_id
 
 
@@ -607,6 +667,7 @@ def update_turnover_fields(conn: sqlite3.Connection, turnover_id: int, fields: d
         f"UPDATE turnover SET {set_clause} WHERE turnover_id = ?",
         values,
     )
+    invalidate_turnover_enrichment_cache(conn, turnover_id)
     _ensure_confirmation_invariant(conn, turnover_id)
 
 
@@ -651,7 +712,11 @@ def insert_task(conn: sqlite3.Connection, data: dict) -> int:
             data["confirmation_status"],
         ),
     )
-    return _inserted_id(conn, "task", "task_id", cursor=cursor)
+    task_id = _inserted_id(conn, "task", "task_id", cursor=cursor)
+    turnover_id = data.get("turnover_id")
+    if turnover_id is not None:
+        invalidate_turnover_enrichment_cache(conn, int(turnover_id))
+    return task_id
 
 
 def update_task_fields(conn: sqlite3.Connection, task_id: int, fields: dict, *, strict: bool = True) -> None:
@@ -668,6 +733,9 @@ def update_task_fields(conn: sqlite3.Connection, task_id: int, fields: dict, *, 
         f"UPDATE task SET {set_clause} WHERE task_id = ?",
         values,
     )
+    row = conn.execute("SELECT turnover_id FROM task WHERE task_id = ?", (task_id,)).fetchone()
+    if row is not None:
+        invalidate_turnover_enrichment_cache(conn, int(row["turnover_id"]))
 
 
 def get_note_by_id(conn: sqlite3.Connection, note_id: int):

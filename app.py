@@ -33,6 +33,7 @@ from ui.components.sidebar import render_navigation
 from ui.screens.admin import render_admin as render_admin_screen
 from ui.screens.board import render_board as render_board_screen
 from ui.screens.flag_bridge import render_flag_bridge as render_flag_bridge_screen
+from ui.screens.risk_radar import render_risk_radar as render_risk_radar_screen
 from ui.screens.turnover_detail import render_turnover_detail as render_turnover_detail_screen
 from ui.state import (
     ASSIGNEE_OPTIONS,
@@ -855,6 +856,97 @@ def render_flag_bridge():
             st.session_state.selected_turnover_id = fb_tid_map[idx]
             st.session_state.page = "detail"
             st.rerun()
+
+
+def _get_risk_radar_rows(phase_filter: str, search_unit: str, risk_level: str):
+    conn = _get_conn()
+    if not conn:
+        st.error("Database not available")
+        return []
+    try:
+        phase_ids = None
+        if db_repository and phase_filter != "All":
+            phases = db_repository.list_phases(conn)
+            phase_id_by_code = {str(p["phase_code"]): p["phase_id"] for p in phases}
+            phase_id = phase_id_by_code.get(phase_filter)
+            if phase_id is not None:
+                phase_ids = [phase_id]
+        return board_query_service.get_risk_radar_rows(
+            conn,
+            property_ids=None,
+            phase_ids=phase_ids,
+            search_unit=search_unit or None,
+            filter_phase=phase_filter if phase_ids is None and phase_filter != "All" else None,
+            risk_level=risk_level if risk_level != "All" else None,
+            today=date.today(),
+        )
+    except Exception as e:
+        st.error(str(e))
+        return []
+    finally:
+        conn.close()
+
+
+def render_risk_radar():
+    st.subheader("Turnover Risk Radar")
+    st.caption("Units most likely to miss readiness or move-in deadlines.")
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        conn = _get_conn()
+        if conn and db_repository:
+            try:
+                phases = db_repository.list_phases(conn)
+                phase_opts = ["All"] + sorted(str(p["phase_code"]) for p in phases)
+            except Exception:
+                phase_opts = ["All", "5", "7", "8"]
+            finally:
+                conn.close()
+        else:
+            phase_opts = ["All", "5", "7", "8"]
+        phase_filter = st.selectbox("Phase", phase_opts, index=0, key="rr_phase")
+    with c2:
+        risk_level = st.selectbox("Risk Level", ["All", "HIGH", "MEDIUM", "LOW"], index=0, key="rr_level")
+    with c3:
+        search_unit = st.text_input("Unit Search", value=st.session_state.get("rr_search", ""), key="rr_search")
+
+    all_rows = _get_risk_radar_rows(phase_filter, search_unit, "All")
+    rows = all_rows if risk_level == "All" else [r for r in all_rows if (r.get("risk_level") or "LOW") == risk_level]
+
+    high_count = sum(1 for r in all_rows if r.get("risk_level") == "HIGH")
+    med_count = sum(1 for r in all_rows if r.get("risk_level") == "MEDIUM")
+    low_count = sum(1 for r in all_rows if r.get("risk_level") == "LOW")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Active Turnovers", len(all_rows))
+    m2.metric("High Risk", high_count)
+    m3.metric("Medium Risk", med_count)
+    m4.metric("Low Risk", low_count)
+
+    if not rows:
+        st.info("No turnovers match current Risk Radar filters.")
+        return
+
+    def _risk_display(level: str) -> str:
+        if level == "HIGH":
+            return "🔴 HIGH"
+        if level == "MEDIUM":
+            return "🟠 MEDIUM"
+        return "🟢 LOW"
+
+    radar_table = []
+    for row in rows:
+        radar_table.append(
+            {
+                "Unit": row.get("unit_code") or "",
+                "Phase": row.get("phase_code") or "",
+                "Risk Level": _risk_display(row.get("risk_level") or "LOW"),
+                "Risk Score": row.get("risk_score") or 0,
+                "Risk Reasons": ", ".join(row.get("risk_reasons") or []),
+                "Move-in Date": _fmt_date(row.get("move_in_date"), default=""),
+            }
+        )
+
+    st.dataframe(pd.DataFrame(radar_table), use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------------------
 # Turnover Detail
@@ -1858,6 +1950,7 @@ def render_import():
                 applied_count = result.get("applied_count", 0)
                 conflict_count = result.get("conflict_count", 0)
                 invalid_count = result.get("invalid_count", 0)
+                diagnostics = result.get("diagnostics", []) or []
                 if status == "NO_OP":
                     st.info(f"No-op: file already imported (checksum match). Batch ID: {batch_id} | Records: {record_count} | Applied: 0")
                 else:
@@ -1865,9 +1958,42 @@ def render_import():
                         f"Batch ID: {batch_id} | Status: {status} | Records: {record_count} | "
                         f"Applied: {applied_count} | Conflicts: {conflict_count} | Invalid: {invalid_count}"
                     )
+                if diagnostics:
+                    st.warning(f"Row diagnostics: {len(diagnostics)} issue(s)")
+                    for diag in diagnostics[:50]:
+                        row_label = f"Row {diag.get('row_index')}" if diag.get("row_index") is not None else "File"
+                        column = diag.get("column")
+                        column_text = f" | Column: {column}" if column else ""
+                        msg = diag.get("error_message") or diag.get("reason") or "Import issue"
+                        suggestion = diag.get("suggestion")
+                        line = f"- {row_label}{column_text} | {msg}"
+                        if suggestion:
+                            line += f" | Suggestion: {suggestion}"
+                        st.write(line)
+                    if len(diagnostics) > 50:
+                        st.caption(f"... and {len(diagnostics) - 50} more diagnostics.")
             except Exception as e:
                 conn.rollback()
-                st.error(str(e))
+                payload = e.to_dict() if hasattr(e, "to_dict") else None
+                if isinstance(payload, dict) and payload.get("error_type") == "IMPORT_VALIDATION_FAILED":
+                    st.error(payload.get("message", "Import validation failed."))
+                    errors = payload.get("errors") or []
+                    if errors:
+                        st.warning(f"Validation diagnostics: {len(errors)} issue(s)")
+                        for diag in errors[:50]:
+                            row_label = f"Row {diag.get('row_index')}" if diag.get("row_index") is not None else "File"
+                            column = diag.get("column")
+                            column_text = f" | Column: {column}" if column else ""
+                            msg = diag.get("error_message") or "Validation issue"
+                            suggestion = diag.get("suggestion")
+                            line = f"- {row_label}{column_text} | {msg}"
+                            if suggestion:
+                                line += f" | Suggestion: {suggestion}"
+                            st.write(line)
+                        if len(errors) > 50:
+                            st.caption(f"... and {len(errors) - 50} more diagnostics.")
+                else:
+                    st.error(str(e))
             finally:
                 conn.close()
                 try:
@@ -1902,6 +2028,8 @@ if st.session_state.page == "dmrb_board":
     render_board_screen(render_dmrb_board)
 elif st.session_state.page == "flag_bridge":
     render_flag_bridge_screen(render_flag_bridge)
+elif st.session_state.page == "risk_radar":
+    render_risk_radar_screen(render_risk_radar)
 elif st.session_state.page == "detail":
     render_turnover_detail_screen(render_detail)
 elif st.session_state.page == "admin":

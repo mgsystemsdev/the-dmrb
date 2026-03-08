@@ -280,6 +280,25 @@ def _recreate_unit_table(conn: ConnectionWrapper) -> None:
     conn.execute("ALTER TABLE unit_new RENAME TO unit")
 
 
+def _ensure_sqlite_performance_structures(conn: ConnectionWrapper) -> None:
+    """Idempotent performance structures for existing SQLite databases."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS turnover_enrichment_cache (
+          turnover_id INTEGER PRIMARY KEY REFERENCES turnover(turnover_id),
+          as_of_date TEXT NOT NULL,
+          cache_payload TEXT NOT NULL,
+          refreshed_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_enrichment_cache_as_of_date ON turnover_enrichment_cache(as_of_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_entity_id ON audit_log(entity_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_changed_at ON audit_log(changed_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_field_name ON audit_log(field_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_entity_changed ON audit_log(entity_type, entity_id, changed_at)")
+
+
 def ensure_database_ready(db_path: str) -> None:
     """
     Ensure DB exists, schema is applied, and migrations 001–010 are applied.
@@ -343,5 +362,7 @@ def ensure_database_ready(db_path: str) -> None:
             conn.execute("UPDATE schema_version SET version = ? WHERE singleton = 1", (n,))
             conn.commit()
             current = n
+        _ensure_sqlite_performance_structures(conn)
+        conn.commit()
     finally:
         conn.close()

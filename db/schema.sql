@@ -196,6 +196,16 @@ CREATE TABLE audit_log (
 );
 
 -- ---------------------------------------------------------------------------
+-- 12b. turnover_enrichment_cache (derived, best-effort)
+-- ---------------------------------------------------------------------------
+CREATE TABLE turnover_enrichment_cache (
+  turnover_id INTEGER PRIMARY KEY REFERENCES turnover(turnover_id),
+  as_of_date TEXT NOT NULL,
+  cache_payload TEXT NOT NULL,
+  refreshed_at TEXT NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
 -- 13. import_batch (append-only)
 -- ---------------------------------------------------------------------------
 CREATE TABLE import_batch (
@@ -234,6 +244,11 @@ CREATE INDEX idx_task_turnover_id ON task(turnover_id);
 CREATE INDEX idx_import_row_batch_id ON import_row(batch_id);
 CREATE INDEX idx_risk_flag_turnover_id ON risk_flag(turnover_id);
 CREATE INDEX idx_note_turnover_id ON note(turnover_id);
+CREATE INDEX idx_audit_log_entity_id ON audit_log(entity_id);
+CREATE INDEX idx_audit_log_changed_at ON audit_log(changed_at);
+CREATE INDEX idx_audit_log_field_name ON audit_log(field_name);
+CREATE INDEX idx_audit_log_entity_changed ON audit_log(entity_type, entity_id, changed_at);
+CREATE INDEX idx_enrichment_cache_as_of_date ON turnover_enrichment_cache(as_of_date);
 
 -- ---------------------------------------------------------------------------
 -- Bootstrap: migration version (managed by ensure_database_ready)

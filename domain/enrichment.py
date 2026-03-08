@@ -17,6 +17,7 @@ from domain.lifecycle import (
     derive_lifecycle_phase,
     effective_move_out_date,
 )
+from domain.risk_radar import score_enriched_turnover
 
 # Task type sequence for execution order (used by compute_facts)
 TASK_TYPES_SEQUENCE = ["Insp", "CB", "MRB", "Paint", "MR", "HK", "CC", "FW"]
@@ -267,4 +268,5 @@ def enrich_row(row: dict, today: date) -> dict:
     row = compute_sla_breaches(row, today)
     row["wd_summary"] = _wd_summary(row)
     row["assign_display"] = _assign_display(row)
+    row.update(score_enriched_turnover(row))
     return row

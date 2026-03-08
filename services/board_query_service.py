@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from db import repository
 from domain import enrichment
+from domain.risk_radar import score_enriched_turnover
 
 
 def _parse_date(s: Optional[str]) -> Optional[date]:
@@ -131,6 +132,19 @@ BRIDGE_MAP = {
     "Plan Bridge": "plan_breach",
 }
 
+ENRICHMENT_CACHE_KEYS = (
+    "dv", "dtbr", "phase", "nvm", "has_move_out_drift", "is_effective_anchor_confirmed", "legal_dot",
+    "is_vacant", "is_smi", "is_on_notice", "is_move_in_present", "is_ready_declared", "is_qc_done",
+    "task_state", "task_completion_ratio", "current_task", "next_task", "is_task_stalled",
+    "is_unit_ready", "is_ready_for_moving", "in_turn_execution", "operational_state", "attention_badge",
+    "days_to_move_in", "inspection_sla_breach", "sla_breach", "sla_movein_breach", "plan_breach", "has_violation",
+    "wd_summary", "assign_display", "risk_score", "risk_level", "risk_reasons",
+)
+
+
+def _extract_enrichment_cache_payload(row: dict) -> dict:
+    return {k: row.get(k) for k in ENRICHMENT_CACHE_KEYS}
+
 
 def get_dmrb_board_rows(
     conn,
@@ -160,6 +174,8 @@ def get_dmrb_board_rows(
         return []
     turnovers = [_row_to_dict(r) for r in turnovers]
     turnover_ids = [t["turnover_id"] for t in turnovers]
+    as_of_date = today.isoformat()
+    cached_by_tid = repository.get_enrichment_cache_for_turnover_ids(conn, turnover_ids, as_of_date=as_of_date)
     unit_ids = list(dict.fromkeys(t["unit_id"] for t in turnovers if t.get("unit_id") is not None))
 
     units = repository.get_units_by_ids(conn, unit_ids)
@@ -198,7 +214,17 @@ def get_dmrb_board_rows(
         tasks_for_t = tasks_by_tid.get(t["turnover_id"], [])
         notes_for_t = notes_by_tid.get(t["turnover_id"], [])
         row = _build_flat_row(t, u, tasks_for_t, notes_for_t)
-        row = enrichment.enrich_row(row, today)
+        cached_payload = cached_by_tid.get(t["turnover_id"])
+        if cached_payload:
+            row.update(cached_payload)
+        else:
+            row = enrichment.enrich_row(row, today)
+            repository.upsert_turnover_enrichment_cache(
+                conn,
+                turnover_id=t["turnover_id"],
+                as_of_date=as_of_date,
+                payload=_extract_enrichment_cache_payload(row),
+            )
 
         if filter_status and filter_status != "All":
             if (row.get("manual_ready_status") or "") != filter_status:
@@ -270,6 +296,43 @@ def get_flag_bridge_rows(
     return [r for r in rows if (r.get(key) is True) == want_true]
 
 
+def get_risk_radar_rows(
+    conn,
+    *,
+    property_ids: Optional[list[int]] = None,
+    phase_ids: Optional[list[int]] = None,
+    search_unit: Optional[str] = None,
+    filter_phase: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    today: Optional[date] = None,
+) -> list[dict]:
+    """
+    Return active enriched turnovers scored for risk radar.
+    Sorted by risk_score descending (highest risk first).
+    """
+    rows = get_dmrb_board_rows(
+        conn,
+        property_ids=property_ids,
+        phase_ids=phase_ids,
+        search_unit=search_unit,
+        filter_phase=filter_phase,
+        today=today,
+    )
+    for row in rows:
+        # Backward-compatible when older cache payloads do not have risk fields yet.
+        if row.get("risk_score") is None or not row.get("risk_level"):
+            row.update(score_enriched_turnover(row))
+    if risk_level and risk_level != "All":
+        rows = [r for r in rows if (r.get("risk_level") or "LOW") == risk_level]
+
+    def _sort_key(r: dict):
+        move_in = _parse_date(r.get("move_in_date"))
+        return (-(r.get("risk_score") or 0), move_in or date.max, -(r.get("dv") or 0))
+
+    rows.sort(key=_sort_key)
+    return rows
+
+
 def get_turnover_detail(
     conn,
     turnover_id: int,
@@ -301,8 +364,22 @@ def get_turnover_detail(
     enriched_fields = {}
     if unit:
         flat = _build_flat_row(turnover, unit, tasks, notes_unresolved)
-        enriched_row = enrichment.enrich_row(flat, today)
-        enriched_fields = enriched_row
+        as_of_date = today.isoformat()
+        cached_payload = repository.get_enrichment_cache_for_turnover_ids(
+            conn, [turnover_id], as_of_date=as_of_date
+        ).get(turnover_id)
+        if cached_payload:
+            flat.update(cached_payload)
+            enriched_fields = flat
+        else:
+            enriched_row = enrichment.enrich_row(flat, today)
+            repository.upsert_turnover_enrichment_cache(
+                conn,
+                turnover_id=turnover_id,
+                as_of_date=as_of_date,
+                payload=_extract_enrichment_cache_payload(enriched_row),
+            )
+            enriched_fields = enriched_row
 
     return {
         "turnover": turnover,
