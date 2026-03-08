@@ -1,0 +1,74 @@
+{
+  "task_assignees": {
+    "Insp": {
+      "options": [
+        "Michael",
+        "Miguel A",
+        "agtsrgre"
+      ],
+      "default": "Michael"
+    },
+    "CB": {
+      "options": [
+        "Make Ready Co"
+      ],
+      "default": ""
+    },
+    "MRB": {
+      "options": [
+        "Make Ready Co"
+      ],
+      "default": "Make Ready Co"
+    },
+    "Paint": {
+      "options": [
+        "Roadrunner"
+      ],
+      "default": "Roadrunner"
+    },
+    "MR": {
+      "options": [
+        "Make Ready Co"
+      ],
+      "default": "Make Ready Co"
+    },
+    "HK": {
+      "options": [
+        "Brad"
+      ],
+      "default": "Brad"
+    },
+    "CC": {
+      "options": [
+        "Brad"
+      ],
+      "default": ""
+    },
+    "FW": {
+      "options": [
+        "Michael",
+        "Miguel A"
+      ],
+      "default": ""
+    },
+    "QC": {
+      "options": [
+        "Michael",
+        "Miguel A",
+        "Brad"
+      ],
+      "default": "Michael"
+    }
+  },
+  "task_offsets": {
+    "Insp": 1,
+    "CB": 2,
+    "MRB": 3,
+    "Paint": 4,
+    "MR": 5,
+    "HK": 6,
+    "CC": 7,
+    "FW": 8,
+    "QC": 9
+  }
+}
