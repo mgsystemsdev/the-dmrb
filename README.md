@@ -258,6 +258,11 @@ See [Postgres Migration Guide](docs/POSTGRES_MIGRATION.md) for the full checklis
 
 At the time of review, the suite does not fully pass in the current repository state. The README instructions above reflect the intended test command, but the codebase currently has failing tests around enrichment parity and some turnover/manual-override schema paths.
 
+## Deploying to Streamlit Community Cloud
+
+- **Python version:** In the deploy UI, open **Advanced settings** and select **Python 3.12** (or 3.11). Do not use Python 3.14; many dependencies do not support it yet and the build can hang at "Processing dependencies".
+- **Secrets:** In the app’s Secrets (TOML), set `DB_ENGINE = "postgres"` and `DATABASE_URL = "postgresql://..."` so the deployed app uses your Supabase Postgres database. Apply the schema once (e.g. run `scripts/apply_postgres_schema.py` locally against the same URL) before relying on the deployed app.
+
 ## Contributing
 
 If this repository will be developed collaboratively, a practical contribution workflow is:

@@ -3,17 +3,9 @@ from __future__ import annotations
 import streamlit as st
 
 
-def render_navigation(current_page: str, enable_writes: bool) -> str:
+def render_navigation(current_page: str) -> str:
     st.sidebar.title("The DMRB")
     st.sidebar.caption("Apartment Turn Tracker")
-    sidebar_writes = st.sidebar.checkbox(
-        "Enable DB Writes (⚠ irreversible)",
-        value=enable_writes,
-        key="enable_db_writes_cb",
-    )
-    if sidebar_writes != st.session_state.enable_db_writes:
-        st.session_state.enable_db_writes = sidebar_writes
-        st.rerun()
 
     nav_labels = ["DMRB Board", "Flag Bridge", "Risk Radar", "Turnover Detail", "DMRB AI Agent", "Admin"]
     nav_to_page = {

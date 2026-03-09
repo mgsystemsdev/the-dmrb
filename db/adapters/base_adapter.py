@@ -91,10 +91,8 @@ class ConnectionWrapper:
                     return int(lastrowid)
             row = self.execute("SELECT last_insert_rowid()").fetchone()
             return int(row[0])
-        row = self.execute(
-            "SELECT currval(pg_get_serial_sequence(?, ?))",
-            (table, id_column),
-        ).fetchone()
+        # Postgres: lastval() returns the last nextval() in this session (works after INSERT with IDENTITY/SERIAL)
+        row = self.execute("SELECT lastval()").fetchone()
         if isinstance(row, dict):
             return int(next(iter(row.values())))
         return int(row[0])

@@ -274,7 +274,7 @@ def _db_write(do_write):
 EXEC_LABELS = [k for k in EXEC_LABEL_TO_VALUE if k]
 CONFIRM_LABELS = list(CONFIRM_LABEL_TO_VALUE.keys())
 
-render_navigation(st.session_state.page, st.session_state.enable_db_writes)
+render_navigation(st.session_state.page)
 
 # Sidebar: Top flags by category
 st.sidebar.divider()
@@ -1709,13 +1709,18 @@ def render_add_availability():
         properties = db_repository.list_properties(conn)
         if not properties:
             st.error("No properties in database. Add a property first.")
+            if not st.session_state.get("enable_db_writes"):
+                st.caption("Turn on **Enable DB Writes** in the sidebar to save.")
             name = st.text_input("Property name", value="My Property", key="add_avail_new_property_name")
             if st.button("Create property", key="add_avail_create_property"):
-                def do_create(conn):
-                    db_repository.insert_property(conn, name or "My Property")
-                if _db_write(do_create):
-                    st.success("Property created. Refreshing.")
-                    st.rerun()
+                if not st.session_state.get("enable_db_writes"):
+                    st.error("Enable DB Writes in the sidebar first.")
+                else:
+                    def do_create(conn):
+                        db_repository.insert_property(conn, name or "My Property")
+                    if _db_write(do_create):
+                        st.success("Property created. Refreshing.")
+                        st.rerun()
             return
         properties = [dict(p) for p in properties]
         property_id = properties[0]["property_id"] if len(properties) == 1 else None
@@ -2086,6 +2091,19 @@ def render_exports():
 # ---------------------------------------------------------------------------
 def render_admin():
     st.subheader("Admin")
+
+    # Enable DB Writes: in Admin so it's not in the main sidebar
+    st.checkbox(
+        "Enable DB Writes (⚠ irreversible)",
+        value=st.session_state.get("enable_db_writes", False),
+        key="enable_db_writes",
+        on_change=lambda: st.rerun(),
+    )
+    if st.session_state.get("enable_db_writes"):
+        st.caption("DB writes are **on**. Edits and status changes will be persisted.")
+    else:
+        st.caption("DB writes are **off**. You can browse and export; turn this on here to save changes.")
+
     tab_add, tab_import, tab_unit_master, tab_export, tab_dropdown = st.tabs(
         ["Add Unit", "Import", "Unit Master Import", "Exports", "Dropdown Manager"]
     )

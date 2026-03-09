@@ -1,0 +1,2 @@
+# Streamlit secrets (contains DB credentials)
+.streamlit/secrets.toml
