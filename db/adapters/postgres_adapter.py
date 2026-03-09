@@ -12,5 +12,10 @@ class PostgresAdapter(BaseAdapter):
     def connect(self, config: DatabaseConfig | None = None, db_path: str | None = None) -> ConnectionWrapper:
         if config is None or not config.postgres_url:
             raise RuntimeError("Postgres adapter requires DatabaseConfig with postgres_url")
-        conn = psycopg.connect(config.postgres_url, row_factory=dict_row)
+        # prepare_threshold=None: required for Supabase/Supavisor transaction mode (port 6543)
+        conn = psycopg.connect(
+            config.postgres_url,
+            row_factory=dict_row,
+            prepare_threshold=None,
+        )
         return ConnectionWrapper(conn, engine=self.engine)
