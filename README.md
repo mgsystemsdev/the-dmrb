@@ -44,10 +44,14 @@ The primary UI is a board-oriented operational cockpit with supporting detail an
 ## Technology Stack
 
 - Python 3
-- Streamlit
-- SQLite
+- Streamlit (primary UI)
+- FastAPI + Uvicorn (API for chat and health checks)
+- SQLite (default local database)
+- Postgres via `psycopg` (optional, including Supabase/Supavisor session pooler)
 - pandas
 - openpyxl
+- matplotlib
+- OpenAI Python SDK
 - pytest
 
 ## How It Works
@@ -146,6 +150,28 @@ export DATABASE_URL=postgresql://user:password@localhost:5432/dmrb
 ```
 
 If `DB_ENGINE` is omitted, DMRB uses SQLite.
+
+### Advanced configuration (environment variables)
+
+Most configuration can be provided either as environment variables or as Streamlit secrets:
+
+- `COCKPIT_DB_PATH` / `DMRB_DATABASE_PATH`: path to the SQLite file (default: `data/cockpit.db`).
+- `DB_ENGINE` / `DMRB_DATABASE_ENGINE`: `"sqlite"` (default) or `"postgres"`.
+- `DATABASE_URL`: Postgres connection string (e.g. Supabase Session pooler URL).
+- `DMRB_ENABLE_DB_WRITES_DEFAULT`: default value for the `Enable DB Writes` toggle (`true`/`false`); defaults to `true` when using Postgres, `false` otherwise.
+- `DMRB_DEFAULT_PROPERTY_ID`: numeric default property ID (default: `1`).
+- `DMRB_ALLOWED_PHASES`: comma-separated list of allowed phases (default: `5,7,8`).
+- `DMRB_TIMEZONE`: IANA timezone name (default: `UTC`).
+- `DMRB_DEFAULT_ACTOR`: default actor name recorded in audit logs (default: `manager`).
+
+### AI integration configuration
+
+The DMRB AI Agent uses the OpenAI Python client by default:
+
+- `AI_INTEGRATIONS_OPENAI_API_KEY`: API key for the OpenAI-compatible endpoint.
+- `AI_INTEGRATIONS_OPENAI_BASE_URL`: optional base URL (for gateways or compatible providers).
+
+If `AI_INTEGRATIONS_OPENAI_BASE_URL` is unset, the default OpenAI endpoint is used.
 
 ## Running the Application
 
@@ -255,6 +281,16 @@ This command:
 4. Verifies record counts, key entities, and required-field parity.
 
 See [Postgres Migration Guide](docs/POSTGRES_MIGRATION.md) for the full checklist.
+
+### Testing your Postgres / Supabase connection
+
+To verify that your `DATABASE_URL` (including Supabase Session pooler URLs) is reachable and correctly configured, run:
+
+```bash
+python test_supabase_connection.py
+```
+
+This uses the same connection options as the app (including `prepare_threshold=None`) and will print a helpful diagnostic message if the project is paused or the database is still starting.
 
 At the time of review, the suite does not fully pass in the current repository state. The README instructions above reflect the intended test command, but the codebase currently has failing tests around enrichment parity and some turnover/manual-override schema paths.
 
