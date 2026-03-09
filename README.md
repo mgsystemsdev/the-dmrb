@@ -30,6 +30,7 @@ The primary UI is a board-oriented operational cockpit with supporting detail an
 - Offline-first local deployment using SQLite with WAL mode enabled
 - Automatic schema bootstrap and ordered database migrations on startup
 - Streamlit UI with operational views for board, flag bridge, turnover detail, and admin tools
+- FastAPI chat endpoints for the DMRB AI Agent (`/api/chat/*`)
 - Deterministic domain logic for lifecycle phase, board enrichment, SLA evaluation, and risk evaluation
 - Import pipelines for `MOVE_OUTS`, `PENDING_MOVE_INS`, `AVAILABLE_UNITS`, `PENDING_FAS`, and `DMRB`
 - Unit Master import for phase/building/unit hierarchy creation and unit metadata updates
@@ -148,7 +149,11 @@ If `DB_ENGINE` is omitted, DMRB uses SQLite.
 
 ## Running the Application
 
-From the repository root:
+From the repository root, run the API and UI in separate terminals:
+
+```bash
+uvicorn api.main:app --reload
+```
 
 ```bash
 streamlit run app.py
@@ -165,7 +170,21 @@ The current Streamlit application exposes four primary areas:
 - `DMRB Board`: operational board of active turnovers
 - `Flag Bridge`: filtered breach and flag analysis view
 - `Turnover Detail`: detailed lifecycle, tasks, notes, and washer/dryer management
+- `DMRB AI Agent`: conversational assistant powered by `/api/chat/*` and full turnover context injection
 - `Admin`: imports, dropdown management, property structure, and unit tools
+
+### Export workflows
+
+The Admin area includes an `Exports` tab that generates operational report artifacts from
+all open turnovers (closed/canceled turnovers are excluded, and current UI filters are ignored):
+
+- `Final_Report.xlsx` (7 sheets)
+- `DMRB_Report.xlsx` (12 sheets)
+- `Dashboard_Chart.png`
+- `Weekly_Summary.txt`
+- `DMRB_Reports.zip` (bundle of all artifacts above)
+
+Use `Prepare Export Files` and then download each file (or all files via ZIP).
 
 ### Write safety
 

@@ -61,3 +61,7 @@ def init_session_state() -> None:
         st.session_state.dropdown_config["task_offsets"] = DEFAULT_TASK_OFFSETS.copy()
     if "enable_db_writes" not in st.session_state:
         st.session_state.enable_db_writes = settings.enable_db_writes_default
+    if "ai_current_session_id" not in st.session_state:
+        st.session_state.ai_current_session_id = None
+    if "ai_messages" not in st.session_state:
+        st.session_state.ai_messages = []

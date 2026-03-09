@@ -206,7 +206,30 @@ CREATE TABLE turnover_enrichment_cache (
 );
 
 -- ---------------------------------------------------------------------------
--- 13. import_batch (append-only)
+-- 13. chat_session
+-- ---------------------------------------------------------------------------
+CREATE TABLE chat_session (
+  id INTEGER PRIMARY KEY,
+  session_id TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL DEFAULT 'New Chat',
+  started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_message_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------------
+-- 14. chat_message
+-- ---------------------------------------------------------------------------
+CREATE TABLE chat_message (
+  id INTEGER PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+  content TEXT NOT NULL,
+  model TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------------
+-- 15. import_batch (append-only)
 -- ---------------------------------------------------------------------------
 CREATE TABLE import_batch (
   batch_id INTEGER PRIMARY KEY,
@@ -219,7 +242,7 @@ CREATE TABLE import_batch (
 );
 
 -- ---------------------------------------------------------------------------
--- 14. import_row (append-only)
+-- 16. import_row (append-only)
 -- ---------------------------------------------------------------------------
 CREATE TABLE import_row (
   row_id INTEGER PRIMARY KEY,
@@ -249,6 +272,9 @@ CREATE INDEX idx_audit_log_changed_at ON audit_log(changed_at);
 CREATE INDEX idx_audit_log_field_name ON audit_log(field_name);
 CREATE INDEX idx_audit_log_entity_changed ON audit_log(entity_type, entity_id, changed_at);
 CREATE INDEX idx_enrichment_cache_as_of_date ON turnover_enrichment_cache(as_of_date);
+CREATE INDEX idx_chat_session_last_message_at ON chat_session(last_message_at);
+CREATE INDEX idx_chat_message_session_id ON chat_message(session_id);
+CREATE INDEX idx_chat_message_created_at ON chat_message(created_at);
 
 -- ---------------------------------------------------------------------------
 -- Bootstrap: migration version (managed by ensure_database_ready)

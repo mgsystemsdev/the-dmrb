@@ -68,7 +68,24 @@ _MIGRATIONS = [
     (10, "010_add_sla_event_anchor_snapshot.sql"),
     (11, "011_add_manual_override_timestamps.sql"),
     (12, "012_add_last_import_columns.sql"),
+    (13, "013_add_chat_tables.sql"),
 ]
+
+
+def _ensure_migration_003_columns(conn: ConnectionWrapper) -> None:
+    """
+    Self-heal for databases that report a high schema_version but are missing
+    migration 003 columns due to legacy/manual schema drift.
+    """
+    task_cols = {row["name"] for row in conn.execute("PRAGMA table_info(task)").fetchall()}
+    turnover_cols = {row["name"] for row in conn.execute("PRAGMA table_info(turnover)").fetchall()}
+
+    if "assignee" not in task_cols:
+        conn.execute("ALTER TABLE task ADD COLUMN assignee TEXT")
+    if "blocking_reason" not in task_cols:
+        conn.execute("ALTER TABLE task ADD COLUMN blocking_reason TEXT")
+    if "wd_present_type" not in turnover_cols:
+        conn.execute("ALTER TABLE turnover ADD COLUMN wd_present_type TEXT")
 
 
 def _backfill_task_template_phase_id(conn: ConnectionWrapper) -> None:
@@ -362,6 +379,10 @@ def ensure_database_ready(db_path: str) -> None:
             conn.execute("UPDATE schema_version SET version = ? WHERE singleton = 1", (n,))
             conn.commit()
             current = n
+
+        # Repair drift for pre-existing DBs that skipped migration 003 but still
+        # report high schema_version.
+        _ensure_migration_003_columns(conn)
         _ensure_sqlite_performance_structures(conn)
         conn.commit()
     finally:
