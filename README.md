@@ -261,7 +261,8 @@ At the time of review, the suite does not fully pass in the current repository s
 ## Deploying to Streamlit Community Cloud
 
 - **Python version:** In the deploy UI, open **Advanced settings** and select **Python 3.12** (or 3.11). Do not use Python 3.14; many dependencies do not support it yet and the build can hang at "Processing dependencies".
-- **Secrets:** In the app’s Secrets (TOML), set `DB_ENGINE = "postgres"` and `DATABASE_URL = "postgresql://..."` so the deployed app uses your Supabase Postgres database. Apply the schema once (e.g. run `scripts/apply_postgres_schema.py` locally against the same URL) before relying on the deployed app.
+- **Secrets:** Set `DB_ENGINE = "postgres"` and `DATABASE_URL` in the app’s Secrets (TOML). Apply the schema once (e.g. run `scripts/apply_postgres_schema.py` locally against the same URL) before relying on the deployed app.
+- **Use the Session pooler URL for DATABASE_URL:** Streamlit Cloud does not support IPv6. Supabase’s direct connection (`db.PROJECT_REF.supabase.co`) uses IPv6 and will fail with "Cannot assign requested address". In the [Supabase Dashboard](https://supabase.com/dashboard) → your project → **Connect** → choose **Session** (Supavisor session mode) and copy that connection string into `DATABASE_URL`. It looks like `postgres://postgres.PROJECT_REF:[PASSWORD]@aws-0-REGION.pooler.supabase.com:5432/postgres` and works over IPv4.
 
 ## Contributing
 
