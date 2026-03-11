@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 import json
 
+from db.errors import DatabaseIntegrityError
+
 def _row_to_dict(row):
     if row is None:
         return None
@@ -340,9 +342,31 @@ def list_properties(conn: sqlite3.Connection) -> list:
 
 def insert_property(conn: sqlite3.Connection, name: str) -> int | None:
     """Insert a property and return the database-generated property_id."""
+    try:
+        cursor = conn.execute(
+            "INSERT INTO property (name) VALUES (%s) RETURNING property_id",
+            (name,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        if isinstance(row, dict):
+            return row.get("property_id")
+        return row[0]
+    except DatabaseIntegrityError as exc:
+        if getattr(conn, "engine", None) != "postgres":
+            raise
+        if 'null value in column "property_id"' not in str(exc):
+            raise
+
+    # Older/drifted Postgres schemas may lack IDENTITY on property.property_id.
+    # Fall back to allocating the next id explicitly under a table lock.
+    conn.execute("LOCK TABLE property IN EXCLUSIVE MODE")
+    row = conn.execute("SELECT COALESCE(MAX(property_id), 0) + 1 AS next_property_id FROM property").fetchone()
+    next_property_id = row["next_property_id"] if isinstance(row, dict) else row[0]
     cursor = conn.execute(
-        "INSERT INTO property (name) VALUES (%s) RETURNING property_id",
-        (name,),
+        "INSERT INTO property (property_id, name) VALUES (%s, %s) RETURNING property_id",
+        (next_property_id, name),
     )
     row = cursor.fetchone()
     if row is None:
