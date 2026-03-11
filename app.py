@@ -268,8 +268,208 @@ def _get_conn():
     return ui_get_conn(_BACKEND_AVAILABLE)
 
 
+def _db_available() -> bool:
+    conn = _get_conn()
+    if not conn:
+        return False
+    conn.close()
+    return True
+
+
+def _invalidate_ui_caches():
+    st.cache_data.clear()
+
+
 def _db_write(do_write):
     return ui_db_write(do_write, backend_available=_BACKEND_AVAILABLE and turnover_service_mod is not None)
+
+
+def _db_cache_identity() -> str:
+    if APP_SETTINGS.database_engine == "postgres":
+        return f"postgres:{APP_SETTINGS.database_url or ''}"
+    return f"sqlite:{_get_db_path()}"
+
+
+def _iso_to_date(value: str) -> date:
+    return date.fromisoformat(value)
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_list_properties(db_identity: str) -> list[dict]:
+    if not db_repository:
+        return []
+    conn = _get_conn()
+    if not conn:
+        return []
+    try:
+        return [dict(row) for row in db_repository.list_properties(conn)]
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_list_phases(db_identity: str, property_id: int | None = None) -> list[dict]:
+    if not db_repository:
+        return []
+    conn = _get_conn()
+    if not conn:
+        return []
+    try:
+        return [dict(row) for row in db_repository.list_phases(conn, property_id=property_id)]
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_list_buildings(db_identity: str, phase_id: int) -> list[dict]:
+    if not db_repository:
+        return []
+    conn = _get_conn()
+    if not conn:
+        return []
+    try:
+        return [dict(row) for row in db_repository.list_buildings(conn, phase_id=phase_id)]
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_list_units(db_identity: str, building_id: int) -> list[dict]:
+    if not db_repository:
+        return []
+    conn = _get_conn()
+    if not conn:
+        return []
+    try:
+        return [dict(row) for row in db_repository.list_units(conn, building_id=building_id)]
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_list_unit_master_import_units(db_identity: str) -> list[dict]:
+    if not db_repository:
+        return []
+    conn = _get_conn()
+    if not conn:
+        return []
+    try:
+        return db_repository.list_unit_master_import_units(conn)
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def _cached_get_flag_bridge_rows(
+    db_identity: str,
+    phase_ids: tuple[int, ...] | None,
+    search_unit: str | None,
+    filter_phase: str | None,
+    filter_status: str | None,
+    filter_nvm: str | None,
+    filter_assignee: str | None,
+    filter_qc: str | None,
+    breach_filter: str | None,
+    breach_value: str | None,
+    today_iso: str,
+) -> list[dict]:
+    if not board_query_service:
+        return []
+    conn = _get_conn()
+    if not conn:
+        return []
+    try:
+        return board_query_service.get_flag_bridge_rows(
+            conn,
+            property_ids=None,
+            phase_ids=list(phase_ids) if phase_ids else None,
+            search_unit=search_unit,
+            filter_phase=filter_phase,
+            filter_status=filter_status,
+            filter_nvm=filter_nvm,
+            filter_assignee=filter_assignee,
+            filter_qc=filter_qc,
+            breach_filter=breach_filter,
+            breach_value=breach_value,
+            today=_iso_to_date(today_iso),
+        )
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def _cached_get_dmrb_board_rows(
+    db_identity: str,
+    phase_ids: tuple[int, ...] | None,
+    search_unit: str | None,
+    filter_phase: str | None,
+    filter_status: str | None,
+    filter_nvm: str | None,
+    filter_assignee: str | None,
+    filter_qc: str | None,
+    today_iso: str,
+) -> list[dict]:
+    if not board_query_service:
+        return []
+    conn = _get_conn()
+    if not conn:
+        return []
+    try:
+        return board_query_service.get_dmrb_board_rows(
+            conn,
+            property_ids=None,
+            phase_ids=list(phase_ids) if phase_ids else None,
+            search_unit=search_unit,
+            filter_phase=filter_phase,
+            filter_status=filter_status,
+            filter_nvm=filter_nvm,
+            filter_assignee=filter_assignee,
+            filter_qc=filter_qc,
+            today=_iso_to_date(today_iso),
+        )
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def _cached_get_risk_radar_rows(
+    db_identity: str,
+    phase_ids: tuple[int, ...] | None,
+    search_unit: str | None,
+    filter_phase: str | None,
+    risk_level: str | None,
+    today_iso: str,
+) -> list[dict]:
+    if not board_query_service:
+        return []
+    conn = _get_conn()
+    if not conn:
+        return []
+    try:
+        return board_query_service.get_risk_radar_rows(
+            conn,
+            property_ids=None,
+            phase_ids=list(phase_ids) if phase_ids else None,
+            search_unit=search_unit,
+            filter_phase=filter_phase,
+            risk_level=risk_level,
+            today=_iso_to_date(today_iso),
+        )
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def _cached_get_turnover_detail(db_identity: str, turnover_id: int, today_iso: str) -> dict:
+    if not board_query_service:
+        return {}
+    conn = _get_conn()
+    if not conn:
+        return {}
+    try:
+        return board_query_service.get_turnover_detail(conn, turnover_id, today=_iso_to_date(today_iso))
+    finally:
+        conn.close()
 
 EXEC_LABELS = [k for k in EXEC_LABEL_TO_VALUE if k]
 CONFIRM_LABELS = list(CONFIRM_LABEL_TO_VALUE.keys())
@@ -279,30 +479,35 @@ render_navigation(st.session_state.page)
 # Sidebar: Top flags by category
 st.sidebar.divider()
 st.sidebar.markdown("**Top Flags**")
-conn = _get_conn()
-if not conn:
+if not _db_available():
     _all_rows = []
     st.sidebar.error("Database not available")
 else:
     try:
-        _all_rows = board_query_service.get_flag_bridge_rows(
-            conn,
-            property_ids=None,
+        db_identity = _db_cache_identity()
+        phase_ids = None
+        if db_repository and st.session_state.filter_phase != "All":
+            phase_map = {str(p["phase_code"]): p["phase_id"] for p in _cached_list_phases(db_identity)}
+            phase_id = phase_map.get(st.session_state.filter_phase)
+            if phase_id is not None:
+                phase_ids = (phase_id,)
+                st.session_state.phase_id_by_code = phase_map
+        _all_rows = _cached_get_flag_bridge_rows(
+            db_identity,
+            phase_ids,
             search_unit=st.session_state.search_unit or None,
-            filter_phase=st.session_state.filter_phase if st.session_state.filter_phase != "All" else None,
+            filter_phase=st.session_state.filter_phase if phase_ids is None and st.session_state.filter_phase != "All" else None,
             filter_status=st.session_state.filter_status if st.session_state.filter_status != "All" else None,
             filter_nvm=st.session_state.filter_nvm if st.session_state.filter_nvm != "All" else None,
             filter_assignee=st.session_state.filter_assignee if st.session_state.filter_assignee != "All" else None,
             filter_qc=st.session_state.filter_qc if st.session_state.filter_qc != "All" else None,
             breach_filter=None,
             breach_value=None,
-            today=date.today(),
+            today_iso=date.today().isoformat(),
         )
     except Exception as e:
         _all_rows = []
         st.sidebar.error(str(e))
-    finally:
-        conn.close()
 _all_rows.sort(key=lambda r: -(r.get("dv") or 0))
 
 def _sort_insp(r):
@@ -364,36 +569,33 @@ if not _any_flags:
 # DMRB Board
 # ---------------------------------------------------------------------------
 def _get_dmrb_rows():
-    conn = _get_conn()
-    if not conn:
+    if not _db_available():
         st.error("Database not available")
         return []
     try:
+        db_identity = _db_cache_identity()
         phase_ids = None
         if db_repository and st.session_state.filter_phase != "All":
             if "phase_id_by_code" not in st.session_state:
-                phases = db_repository.list_phases(conn)
+                phases = _cached_list_phases(db_identity)
                 st.session_state.phase_id_by_code = {str(p["phase_code"]): p["phase_id"] for p in phases}
             phase_id = st.session_state.get("phase_id_by_code", {}).get(st.session_state.filter_phase)
             if phase_id is not None:
-                phase_ids = [phase_id]
-        return board_query_service.get_dmrb_board_rows(
-            conn,
-            property_ids=None,
-            phase_ids=phase_ids,
+                phase_ids = (phase_id,)
+        return _cached_get_dmrb_board_rows(
+            db_identity,
+            phase_ids,
             search_unit=st.session_state.search_unit or None,
             filter_phase=st.session_state.filter_phase if phase_ids is None and st.session_state.filter_phase != "All" else None,
             filter_status=st.session_state.filter_status if st.session_state.filter_status != "All" else None,
             filter_nvm=st.session_state.filter_nvm if st.session_state.filter_nvm != "All" else None,
             filter_assignee=st.session_state.filter_assignee if st.session_state.filter_assignee != "All" else None,
             filter_qc=st.session_state.filter_qc if st.session_state.filter_qc != "All" else None,
-            today=date.today(),
+            today_iso=date.today().isoformat(),
         )
     except Exception as e:
         st.error(str(e))
         return []
-    finally:
-        conn.close()
 
 def _exec_label(task_dict):
     """Get display label for a task's execution status."""
@@ -416,10 +618,9 @@ def render_dmrb_board():
         with c0:
             st.session_state.search_unit = st.text_input("Search unit", value=st.session_state.search_unit, key="dmrb_search")
         with c1:
-            conn = _get_conn()
-            if conn and db_repository:
+            if db_repository:
                 try:
-                    phases = db_repository.list_phases(conn)
+                    phases = _cached_list_phases(_db_cache_identity())
                     st.session_state.phase_id_by_code = {str(p["phase_code"]): p["phase_id"] for p in phases}
                     phase_opts = ["All"] + sorted(st.session_state.phase_id_by_code.keys())
                 except Exception:
@@ -728,6 +929,7 @@ def render_dmrb_board():
                         ),
                     )
                 conn.commit()
+                _invalidate_ui_caches()
             except Exception as e:
                 conn.rollback()
                 st.error(str(e))
@@ -739,19 +941,18 @@ def render_dmrb_board():
 # Flag Bridge
 # ---------------------------------------------------------------------------
 def _get_flag_bridge_rows():
-    conn = _get_conn()
-    if not conn:
+    if not _db_available():
         return []
     try:
+        db_identity = _db_cache_identity()
         phase_ids = None
         if db_repository and st.session_state.filter_phase != "All":
             phase_id = st.session_state.get("phase_id_by_code", {}).get(st.session_state.filter_phase)
             if phase_id is not None:
-                phase_ids = [phase_id]
-        return board_query_service.get_flag_bridge_rows(
-            conn,
-            property_ids=None,
-            phase_ids=phase_ids,
+                phase_ids = (phase_id,)
+        return _cached_get_flag_bridge_rows(
+            db_identity,
+            phase_ids,
             search_unit=st.session_state.search_unit or None,
             filter_phase=st.session_state.filter_phase if phase_ids is None and st.session_state.filter_phase != "All" else None,
             filter_status=st.session_state.filter_status if st.session_state.filter_status != "All" else None,
@@ -760,13 +961,11 @@ def _get_flag_bridge_rows():
             filter_qc=st.session_state.filter_qc if st.session_state.filter_qc != "All" else None,
             breach_filter=st.session_state.breach_filter if st.session_state.breach_filter != "All" else None,
             breach_value=st.session_state.breach_value if st.session_state.breach_value != "All" else None,
-            today=date.today(),
+            today_iso=date.today().isoformat(),
         )
     except Exception as e:
         st.error(str(e))
         return []
-    finally:
-        conn.close()
 
 def render_flag_bridge():
     rows = _get_flag_bridge_rows()
@@ -864,32 +1063,29 @@ def render_flag_bridge():
 
 
 def _get_risk_radar_rows(phase_filter: str, search_unit: str, risk_level: str):
-    conn = _get_conn()
-    if not conn:
+    if not _db_available():
         st.error("Database not available")
         return []
     try:
+        db_identity = _db_cache_identity()
         phase_ids = None
         if db_repository and phase_filter != "All":
-            phases = db_repository.list_phases(conn)
+            phases = _cached_list_phases(db_identity)
             phase_id_by_code = {str(p["phase_code"]): p["phase_id"] for p in phases}
             phase_id = phase_id_by_code.get(phase_filter)
             if phase_id is not None:
-                phase_ids = [phase_id]
-        return board_query_service.get_risk_radar_rows(
-            conn,
-            property_ids=None,
-            phase_ids=phase_ids,
+                phase_ids = (phase_id,)
+        return _cached_get_risk_radar_rows(
+            db_identity,
+            phase_ids,
             search_unit=search_unit or None,
             filter_phase=phase_filter if phase_ids is None and phase_filter != "All" else None,
             risk_level=risk_level if risk_level != "All" else None,
-            today=date.today(),
+            today_iso=date.today().isoformat(),
         )
     except Exception as e:
         st.error(str(e))
         return []
-    finally:
-        conn.close()
 
 
 def render_risk_radar():
@@ -898,15 +1094,12 @@ def render_risk_radar():
 
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
-        conn = _get_conn()
-        if conn and db_repository:
+        if db_repository:
             try:
-                phases = db_repository.list_phases(conn)
+                phases = _cached_list_phases(_db_cache_identity())
                 phase_opts = ["All"] + sorted(str(p["phase_code"]) for p in phases)
             except Exception:
                 phase_opts = ["All", "5", "7", "8"]
-            finally:
-                conn.close()
         else:
             phase_opts = ["All", "5", "7", "8"]
         phase_filter = st.selectbox("Phase", phase_opts, index=0, key="rr_phase")
@@ -970,12 +1163,21 @@ def render_detail():
         st.subheader("Turnover Detail")
         unit_search = st.text_input("Unit code", key="detail_unit_search")
         if st.button("Go"):
-            conn = _get_conn()
-            if not conn:
+            if not _db_available():
                 st.error("Database not available")
                 return
             try:
-                rows = board_query_service.get_dmrb_board_rows(conn, property_ids=None, today=date.today())
+                rows = _cached_get_dmrb_board_rows(
+                    _db_cache_identity(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    date.today().isoformat(),
+                )
                 norm = (unit_search or "").strip().lower()
                 for r in rows:
                     if norm and norm in (r.get("unit_code") or "").lower():
@@ -985,23 +1187,18 @@ def render_detail():
             except Exception as e:
                 st.error(str(e))
                 return
-            finally:
-                conn.close()
             st.warning("Unit not found")
         return
 
     tid = st.session_state.selected_turnover_id
-    conn = _get_conn()
-    if not conn:
+    if not _db_available():
         st.error("Database not available")
         return
     try:
-        detail = board_query_service.get_turnover_detail(conn, tid, today=date.today())
+        detail = _cached_get_turnover_detail(_db_cache_identity(), tid, date.today().isoformat())
     except Exception as e:
         st.error(str(e))
         return
-    finally:
-        conn.close()
     if not detail or not detail.get("turnover"):
         st.warning("Turnover not found")
         st.session_state.selected_turnover_id = None
@@ -1626,64 +1823,58 @@ def render_property_structure():
     if not db_repository:
         st.info("Backend not available.")
         return
-    conn = _get_conn()
-    if not conn:
+    if not _db_available():
         st.error("Database not available")
         return
-    try:
-        properties = db_repository.list_properties(conn)
-        if not properties:
-            st.write("No properties in database. Create one below.")
+    db_identity = _db_cache_identity()
+    properties = _cached_list_properties(db_identity)
+    if not properties:
+        st.write("No properties in database. Create one below.")
+        if st.session_state.get("enable_db_writes"):
+            name = st.text_input("Property name", value="My Property", key="ps_new_property_name")
+            if st.button("Create property", key="ps_create_property"):
+                def do_create(conn):
+                    db_repository.insert_property(conn, name or "My Property")
+                if _db_write(do_create):
+                    st.success("Property created.")
+                    st.rerun()
+        else:
+            st.caption("Enable DB Writes in the sidebar to create a property.")
+        return
+    for prop in properties:
+        pid = prop["property_id"]
+        name = prop.get("name") or f"Property {pid}"
+        with st.expander(f"**{name}** (id={pid})", expanded=True):
+            phases = _cached_list_phases(db_identity, pid)
             if st.session_state.get("enable_db_writes"):
-                name = st.text_input("Property name", value="My Property", key="ps_new_property_name")
-                if st.button("Create property", key="ps_create_property"):
-                    def do_create(conn):
-                        db_repository.insert_property(conn, name or "My Property")
-                    if _db_write(do_create):
-                        st.success("Property created.")
-                        st.rerun()
-            else:
-                st.caption("Enable DB Writes in the sidebar to create a property.")
-            return
-        for prop in properties:
-            prop = dict(prop)
-            pid = prop["property_id"]
-            name = prop.get("name") or f"Property {pid}"
-            with st.expander(f"**{name}** (id={pid})", expanded=True):
-                phases = db_repository.list_phases(conn, property_id=pid)
-                if st.session_state.get("enable_db_writes"):
-                    st.caption("Add another phase to this property:")
-                    add_phase_col1, add_phase_col2 = st.columns([1, 3])
-                    with add_phase_col1:
-                        new_phase_code = st.text_input("Phase code", value="", key=f"ps_phase_code_{pid}", placeholder="e.g. 5, 7, 8")
-                    with add_phase_col2:
-                        if st.button("Add phase", key=f"ps_add_phase_{pid}") and (new_phase_code or "").strip():
-                            def do_add_phase(conn, prop_id=pid, code=new_phase_code.strip()):
-                                db_repository.resolve_phase(conn, property_id=prop_id, phase_code=code)
-                            if _db_write(lambda c: do_add_phase(c)):
-                                st.success(f"Phase {new_phase_code.strip()} added.")
-                                st.rerun()
-                if not phases:
-                    st.caption("No phases yet.")
+                st.caption("Add another phase to this property:")
+                add_phase_col1, add_phase_col2 = st.columns([1, 3])
+                with add_phase_col1:
+                    new_phase_code = st.text_input("Phase code", value="", key=f"ps_phase_code_{pid}", placeholder="e.g. 5, 7, 8")
+                with add_phase_col2:
+                    if st.button("Add phase", key=f"ps_add_phase_{pid}") and (new_phase_code or "").strip():
+                        def do_add_phase(conn, prop_id=pid, code=new_phase_code.strip()):
+                            db_repository.resolve_phase(conn, property_id=prop_id, phase_code=code)
+                        if _db_write(lambda c: do_add_phase(c)):
+                            st.success(f"Phase {new_phase_code.strip()} added.")
+                            st.rerun()
+            if not phases:
+                st.caption("No phases yet.")
+                continue
+            for ph in phases:
+                phase_id = ph["phase_id"]
+                phase_code = ph.get("phase_code") or ""
+                st.markdown(f"Phase **{phase_code}** (id={phase_id})")
+                buildings = _cached_list_buildings(db_identity, phase_id)
+                if not buildings:
+                    st.caption("  No buildings.")
                     continue
-                for ph in phases:
-                    ph = dict(ph)
-                    phase_id = ph["phase_id"]
-                    phase_code = ph.get("phase_code") or ""
-                    st.markdown(f"Phase **{phase_code}** (id={phase_id})")
-                    buildings = db_repository.list_buildings(conn, phase_id=phase_id)
-                    if not buildings:
-                        st.caption("  No buildings.")
-                        continue
-                    for b in buildings:
-                        b = dict(b)
-                        building_id = b["building_id"]
-                        bcode = b.get("building_code") or ""
-                        units = db_repository.list_units(conn, building_id=building_id)
-                        unit_list = ", ".join(str(dict(u).get("unit_number") or dict(u).get("unit_id")) for u in units) if units else "—"
-                        st.caption(f"  Building {bcode} (id={building_id}): units {unit_list}")
-    finally:
-        conn.close()
+                for b in buildings:
+                    building_id = b["building_id"]
+                    bcode = b.get("building_code") or ""
+                    units = _cached_list_units(db_identity, building_id)
+                    unit_list = ", ".join(str(u.get("unit_number") or u.get("unit_id")) for u in units) if units else "—"
+                    st.caption(f"  Building {bcode} (id={building_id}): units {unit_list}")
 
 
 # ---------------------------------------------------------------------------
@@ -1701,132 +1892,124 @@ def render_add_availability():
         return
     if not st.session_state.get("enable_db_writes"):
         st.caption("Turn on **Enable DB Writes** in the sidebar to submit.")
-    conn = _get_conn()
-    if not conn:
+    if not _db_available():
         st.error("Database not available")
         return
-    try:
-        properties = db_repository.list_properties(conn)
-        if not properties:
-            st.error("No properties in database. Add a property first.")
+    db_identity = _db_cache_identity()
+    properties = _cached_list_properties(db_identity)
+    if not properties:
+        st.error("No properties in database. Add a property first.")
+        if not st.session_state.get("enable_db_writes"):
+            st.caption("Turn on **Enable DB Writes** in the sidebar to save.")
+        name = st.text_input("Property name", value="My Property", key="add_avail_new_property_name")
+        if st.button("Create property", key="add_avail_create_property"):
             if not st.session_state.get("enable_db_writes"):
-                st.caption("Turn on **Enable DB Writes** in the sidebar to save.")
-            name = st.text_input("Property name", value="My Property", key="add_avail_new_property_name")
-            if st.button("Create property", key="add_avail_create_property"):
-                if not st.session_state.get("enable_db_writes"):
-                    st.error("Enable DB Writes in the sidebar first.")
-                else:
-                    def do_create(conn):
-                        db_repository.insert_property(conn, name or "My Property")
-                    if _db_write(do_create):
-                        st.success("Property created. Refreshing.")
-                        st.rerun()
-            return
-        properties = [dict(p) for p in properties]
-        property_id = properties[0]["property_id"] if len(properties) == 1 else None
-        if property_id is None:
-            prop_opts = [f"{p.get('name') or p['property_id']} (id={p['property_id']})" for p in properties]
-            sel = st.selectbox("Property", prop_opts, key="add_avail_property")
-            property_id = int(sel.split("(id=")[1].rstrip(")"))
-        else:
-            p0 = dict(properties[0])
-            st.caption(f"Property: {p0.get('name') or property_id}")
-        phases = db_repository.list_phases(conn, property_id=property_id)
-        if not phases:
-            st.warning("No phases for this property. Run **Admin → Unit Master Import** with your Units CSV first to populate Phase and Building dropdowns, or create one phase below.")
-            if not st.session_state.get("enable_db_writes"):
-                st.caption("Turn on **Enable DB Writes** in the sidebar, then use the form below.")
-            phase_code_input = st.text_input("Phase code", value="5", key="add_avail_new_phase_code", help="e.g. 5, 7, or 8")
-            if st.button("Create phase", key="add_avail_create_phase"):
-                if not st.session_state.get("enable_db_writes"):
-                    st.error("Enable DB Writes in the sidebar first.")
-                else:
-                    code = (phase_code_input or "5").strip()
-                    if not code:
-                        st.error("Enter a phase code.")
-                    else:
-                        def do_create_phase(conn):
-                            db_repository.resolve_phase(conn, property_id=property_id, phase_code=code)
-                        if _db_write(do_create_phase):
-                            st.success("Phase created. Refreshing.")
-                            st.rerun()
-            return
-        phases = [dict(p) for p in phases]
-        phase_opts = sorted(
-            [str(p.get("phase_code") or p.get("phase_id") or "") for p in phases if (p.get("phase_code") or p.get("phase_id"))],
-            key=lambda x: (int(x) if x.isdigit() else float("inf"), x),
-        )
-        if not phase_opts:
-            phase_opts = [str(p.get("phase_id", "")) for p in phases]
-        prev_phase = st.session_state.get("add_avail_phase")
-        phase_idx = phase_opts.index(prev_phase) if prev_phase in phase_opts else 0
-        phase_code = st.selectbox("Phase", phase_opts, index=phase_idx, key="add_avail_phase")
-        # Clear stale building selection when phase changes
-        if prev_phase is not None and prev_phase != phase_code:
-            st.session_state.pop("add_avail_building", None)
-        phase_row = next((p for p in phases if str(p.get("phase_code") or p.get("phase_id") or "") == phase_code), phases[0] if phases else None)
-        phase_id = int(phase_row["phase_id"]) if phase_row else None
-        buildings = db_repository.list_buildings(conn, phase_id=phase_id) if phase_id else []
-        buildings = [dict(b) for b in buildings]
-        building_opts = sorted(
-            [str(b.get("building_code") or b.get("building_id") or "") for b in buildings if (b.get("building_code") or b.get("building_id"))],
-            key=lambda x: (int(x) if x.isdigit() else float("inf"), x),
-        )
-        if not building_opts:
-            building_opts = [str(b.get("building_id", "")) for b in buildings]
-        if building_opts:
-            prev_bldg = st.session_state.get("add_avail_building")
-            building_idx = building_opts.index(prev_bldg) if prev_bldg in building_opts else 0
-            building_code = st.selectbox("Building", building_opts, index=building_idx, key="add_avail_building")
-        else:
-            st.warning(f"No buildings found for Phase {phase_code}. Run **Unit Master Import** or create one below.")
-            if not st.session_state.get("enable_db_writes"):
-                st.caption("Turn on **Enable DB Writes** in the sidebar, then use the form below.")
-            building_code_input = st.text_input("Building code", value="1", key="add_avail_new_building_code", help="e.g. 1, 2, A, B")
-            if st.button("Create building", key="add_avail_create_building"):
-                if not st.session_state.get("enable_db_writes"):
-                    st.error("Enable DB Writes in the sidebar first.")
-                else:
-                    bcode = (building_code_input or "1").strip()
-                    if not bcode:
-                        st.error("Enter a building code.")
-                    else:
-                        def do_create_building(conn):
-                            db_repository.resolve_building(conn, phase_id=phase_id, building_code=bcode)
-                        if _db_write(do_create_building):
-                            st.success(f"Building {bcode} created under Phase {phase_code}. Refreshing.")
-                            st.rerun()
-            return
-        unit_number = st.text_input("Unit", key="add_avail_unit_number").strip()
-        move_out_date = st.date_input("Move out", key="add_avail_move_out", format="MM/DD/YYYY")
-        report_ready_date = st.date_input("Ready date (optional)", value=None, key="add_avail_report_ready", format="MM/DD/YYYY")
-        move_in_date = st.date_input("Move in (optional)", value=None, key="add_avail_move_in", format="MM/DD/YYYY")
-        if st.button("Add unit", key="add_avail_submit"):
-            if not st.session_state.get("enable_db_writes"):
-                st.error("Enable DB Writes in the sidebar to create a turnover.")
-            elif not unit_number:
-                st.error("Unit is required.")
+                st.error("Enable DB Writes in the sidebar first.")
             else:
-                def do_add(conn):
-                    return create_turnover_workflow(
-                        conn,
-                        CreateTurnover(
-                            property_id=property_id,
-                            phase_code=phase_code,
-                            building_code=building_code,
-                            unit_number=unit_number,
-                            move_out_date=move_out_date,
-                            move_in_date=move_in_date if move_in_date else None,
-                            report_ready_date=report_ready_date if report_ready_date else None,
-                            today=date.today(),
-                            actor=APP_SETTINGS.default_actor,
-                        ),
-                    )
-                if _db_write(do_add):
-                    st.success("Turnover created. You can open it from the board or detail.")
+                def do_create(conn):
+                    db_repository.insert_property(conn, name or "My Property")
+                if _db_write(do_create):
+                    st.success("Property created. Refreshing.")
                     st.rerun()
-    finally:
-        conn.close()
+        return
+    property_id = properties[0]["property_id"] if len(properties) == 1 else None
+    if property_id is None:
+        prop_opts = [f"{p.get('name') or p['property_id']} (id={p['property_id']})" for p in properties]
+        sel = st.selectbox("Property", prop_opts, key="add_avail_property")
+        property_id = int(sel.split("(id=")[1].rstrip(")"))
+    else:
+        st.caption(f"Property: {properties[0].get('name') or property_id}")
+    phases = _cached_list_phases(db_identity, property_id)
+    if not phases:
+        st.warning("No phases for this property. Run **Admin → Unit Master Import** with your Units CSV first to populate Phase and Building dropdowns, or create one phase below.")
+        if not st.session_state.get("enable_db_writes"):
+            st.caption("Turn on **Enable DB Writes** in the sidebar, then use the form below.")
+        phase_code_input = st.text_input("Phase code", value="5", key="add_avail_new_phase_code", help="e.g. 5, 7, or 8")
+        if st.button("Create phase", key="add_avail_create_phase"):
+            if not st.session_state.get("enable_db_writes"):
+                st.error("Enable DB Writes in the sidebar first.")
+            else:
+                code = (phase_code_input or "5").strip()
+                if not code:
+                    st.error("Enter a phase code.")
+                else:
+                    def do_create_phase(conn):
+                        db_repository.resolve_phase(conn, property_id=property_id, phase_code=code)
+                    if _db_write(do_create_phase):
+                        st.success("Phase created. Refreshing.")
+                        st.rerun()
+        return
+    phase_opts = sorted(
+        [str(p.get("phase_code") or p.get("phase_id") or "") for p in phases if (p.get("phase_code") or p.get("phase_id"))],
+        key=lambda x: (int(x) if x.isdigit() else float("inf"), x),
+    )
+    if not phase_opts:
+        phase_opts = [str(p.get("phase_id", "")) for p in phases]
+    prev_phase = st.session_state.get("add_avail_phase")
+    phase_idx = phase_opts.index(prev_phase) if prev_phase in phase_opts else 0
+    phase_code = st.selectbox("Phase", phase_opts, index=phase_idx, key="add_avail_phase")
+    if prev_phase is not None and prev_phase != phase_code:
+        st.session_state.pop("add_avail_building", None)
+    phase_row = next((p for p in phases if str(p.get("phase_code") or p.get("phase_id") or "") == phase_code), phases[0] if phases else None)
+    phase_id = int(phase_row["phase_id"]) if phase_row else None
+    buildings = _cached_list_buildings(db_identity, phase_id) if phase_id else []
+    building_opts = sorted(
+        [str(b.get("building_code") or b.get("building_id") or "") for b in buildings if (b.get("building_code") or b.get("building_id"))],
+        key=lambda x: (int(x) if x.isdigit() else float("inf"), x),
+    )
+    if not building_opts:
+        building_opts = [str(b.get("building_id", "")) for b in buildings]
+    if building_opts:
+        prev_bldg = st.session_state.get("add_avail_building")
+        building_idx = building_opts.index(prev_bldg) if prev_bldg in building_opts else 0
+        building_code = st.selectbox("Building", building_opts, index=building_idx, key="add_avail_building")
+    else:
+        st.warning(f"No buildings found for Phase {phase_code}. Run **Unit Master Import** or create one below.")
+        if not st.session_state.get("enable_db_writes"):
+            st.caption("Turn on **Enable DB Writes** in the sidebar, then use the form below.")
+        building_code_input = st.text_input("Building code", value="1", key="add_avail_new_building_code", help="e.g. 1, 2, A, B")
+        if st.button("Create building", key="add_avail_create_building"):
+            if not st.session_state.get("enable_db_writes"):
+                st.error("Enable DB Writes in the sidebar first.")
+            else:
+                bcode = (building_code_input or "1").strip()
+                if not bcode:
+                    st.error("Enter a building code.")
+                else:
+                    def do_create_building(conn):
+                        db_repository.resolve_building(conn, phase_id=phase_id, building_code=bcode)
+                    if _db_write(do_create_building):
+                        st.success(f"Building {bcode} created under Phase {phase_code}. Refreshing.")
+                        st.rerun()
+        return
+    unit_number = st.text_input("Unit", key="add_avail_unit_number").strip()
+    move_out_date = st.date_input("Move out", key="add_avail_move_out", format="MM/DD/YYYY")
+    report_ready_date = st.date_input("Ready date (optional)", value=None, key="add_avail_report_ready", format="MM/DD/YYYY")
+    move_in_date = st.date_input("Move in (optional)", value=None, key="add_avail_move_in", format="MM/DD/YYYY")
+    if st.button("Add unit", key="add_avail_submit"):
+        if not st.session_state.get("enable_db_writes"):
+            st.error("Enable DB Writes in the sidebar to create a turnover.")
+        elif not unit_number:
+            st.error("Unit is required.")
+        else:
+            def do_add(conn):
+                return create_turnover_workflow(
+                    conn,
+                    CreateTurnover(
+                        property_id=property_id,
+                        phase_code=phase_code,
+                        building_code=building_code,
+                        unit_number=unit_number,
+                        move_out_date=move_out_date,
+                        move_in_date=move_in_date if move_in_date else None,
+                        report_ready_date=report_ready_date if report_ready_date else None,
+                        today=date.today(),
+                        actor=APP_SETTINGS.default_actor,
+                    ),
+                )
+            if _db_write(do_add):
+                st.success("Turnover created. You can open it from the board or detail.")
+                st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -1845,73 +2028,69 @@ def render_unit_master_import():
     if not st.session_state.get("enable_db_writes"):
         st.warning("Enable DB Writes in the sidebar to run import.")
         return
-    conn = _get_conn()
-    if not conn:
+    if not _db_available():
         st.error("Database not available")
         return
-    try:
-        properties = db_repository.list_properties(conn)
-        if not properties:
-            st.error("No properties in database. Add a property first.")
-            name = st.text_input("Property name", value="My Property", key="um_import_new_property_name")
-            if st.button("Create property", key="um_import_create_property"):
-                def do_create(conn):
-                    db_repository.insert_property(conn, name or "My Property")
-                if _db_write(do_create):
-                    st.success("Property created. Refreshing.")
-                    st.rerun()
-            return
-        properties = [dict(p) for p in properties]
-        property_id = properties[0]["property_id"] if len(properties) == 1 else None
-        if property_id is None:
-            prop_opts = [f"{p.get('name') or p['property_id']} (id={p['property_id']})" for p in properties]
-            sel = st.selectbox("Property", prop_opts, key="um_import_property")
-            property_id = int(sel.split("(id=")[1].rstrip(")"))
+    db_identity = _db_cache_identity()
+    properties = _cached_list_properties(db_identity)
+    if not properties:
+        st.error("No properties in database. Add a property first.")
+        name = st.text_input("Property name", value="My Property", key="um_import_new_property_name")
+        if st.button("Create property", key="um_import_create_property"):
+            def do_create(conn):
+                db_repository.insert_property(conn, name or "My Property")
+            if _db_write(do_create):
+                st.success("Property created. Refreshing.")
+                st.rerun()
+        return
+    property_id = properties[0]["property_id"] if len(properties) == 1 else None
+    if property_id is None:
+        prop_opts = [f"{p.get('name') or p['property_id']} (id={p['property_id']})" for p in properties]
+        sel = st.selectbox("Property", prop_opts, key="um_import_property")
+        property_id = int(sel.split("(id=")[1].rstrip(")"))
+    else:
+        st.caption(f"Property: {properties[0].get('name') or property_id}")
+    strict_mode = st.checkbox("Strict mode (fail if unit not found; no creates)", value=False, key="um_import_strict")
+    uploaded = st.file_uploader("Units.csv", type=["csv"], key="um_import_file")
+    if st.button("Run Unit Master Import", key="um_import_run"):
+        if uploaded is None:
+            st.warning("Upload a CSV file first.")
         else:
-            st.caption(f"Property: {properties[0].get('name') or property_id}")
-        strict_mode = st.checkbox("Strict mode (fail if unit not found; no creates)", value=False, key="um_import_strict")
-        uploaded = st.file_uploader("Units.csv", type=["csv"], key="um_import_file")
-        if st.button("Run Unit Master Import", key="um_import_run"):
-            if uploaded is None:
-                st.warning("Upload a CSV file first.")
-            else:
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as tmp:
-                    tmp.write(uploaded.getvalue())
-                    tmp_path = tmp.name
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as tmp:
+                tmp.write(uploaded.getvalue())
+                tmp_path = tmp.name
+            try:
+                um_result = [None]
+
+                def do_import(conn):
+                    um_result[0] = unit_master_import_service_mod.run_unit_master_import(
+                        conn, tmp_path, property_id=property_id, strict_mode=strict_mode
+                    )
+
+                if _db_write(do_import):
+                    result = um_result[0] or {}
+                    status_label = result.get("status", "SUCCESS")
+                    if status_label == "NO_OP":
+                        st.info(f"No-op: this file was already imported (checksum match). Applied: 0")
+                    else:
+                        st.success(f"Status: {status_label} | Applied: {result.get('applied_count', 0)} | Conflicts: {result.get('conflict_count', 0)} | Errors: {result.get('error_count', 0)}")
+                    if result.get("errors"):
+                        for err in result["errors"][:20]:
+                            st.write(f"- {err}")
+                        if len(result["errors"]) > 20:
+                            st.caption(f"... and {len(result['errors']) - 20} more.")
+            finally:
                 try:
-                    um_result = [None]
-
-                    def do_import(conn):
-                        um_result[0] = unit_master_import_service_mod.run_unit_master_import(
-                            conn, tmp_path, property_id=property_id, strict_mode=strict_mode
-                        )
-
-                    if _db_write(do_import):
-                        result = um_result[0] or {}
-                        status_label = result.get("status", "SUCCESS")
-                        if status_label == "NO_OP":
-                            st.info(f"No-op: this file was already imported (checksum match). Applied: 0")
-                        else:
-                            st.success(f"Status: {status_label} | Applied: {result.get('applied_count', 0)} | Conflicts: {result.get('conflict_count', 0)} | Errors: {result.get('error_count', 0)}")
-                        if result.get("errors"):
-                            for err in result["errors"][:20]:
-                                st.write(f"- {err}")
-                            if len(result["errors"]) > 20:
-                                st.caption(f"... and {len(result['errors']) - 20} more.")
-                finally:
-                    try:
-                        os.unlink(tmp_path)
-                    except Exception:
-                        pass
-        st.markdown("### Unit Master Import \u2014 Imported Units")
-        imported_units = db_repository.list_unit_master_import_units(conn)
-        if imported_units:
-            st.dataframe(pd.DataFrame(imported_units), use_container_width=True, hide_index=True)
-        else:
-            st.info("No units imported yet.")
-    finally:
-        conn.close()
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+    st.markdown("### Unit Master Import \u2014 Imported Units")
+    imported_units = _cached_list_unit_master_import_units(db_identity)
+    if imported_units:
+        st.dataframe(pd.DataFrame(imported_units), use_container_width=True, hide_index=True)
+    else:
+        st.info("No units imported yet.")
 
 
 # ---------------------------------------------------------------------------
@@ -1960,6 +2139,7 @@ def render_import():
                     ),
                 )
                 conn.commit()
+                _invalidate_ui_caches()
                 status = result.get("status", "SUCCESS")
                 batch_id = result.get("batch_id", "")
                 record_count = result.get("record_count", 0)

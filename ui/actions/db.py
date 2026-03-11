@@ -34,6 +34,7 @@ def db_write(do_write, *, backend_available: bool):
     try:
         do_write(conn)
         conn.commit()
+        st.cache_data.clear()
         return True
     except Exception as exc:
         conn.rollback()
