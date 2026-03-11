@@ -1107,6 +1107,15 @@ def insert_import_row(conn: sqlite3.Connection, data: dict) -> int:
     return _inserted_id(conn, "import_row", "row_id", cursor=cursor)
 
 
+def get_import_rows_by_batch(conn: sqlite3.Connection, batch_id: int) -> list[dict]:
+    """Return all import_row entries for a given batch_id as dicts."""
+    cursor = conn.execute(
+        "SELECT * FROM import_row WHERE batch_id = ? ORDER BY row_id",
+        (batch_id,),
+    )
+    return _rows_to_dicts(cursor.fetchall())
+
+
 def insert_audit_log(conn: sqlite3.Connection, data: dict) -> int:
     cursor = conn.execute(
         """INSERT INTO audit_log (

@@ -2214,6 +2214,33 @@ def render_import():
                         st.write(line)
                     if len(diagnostics) > 50:
                         st.caption(f"... and {len(diagnostics) - 50} more diagnostics.")
+                # For AVAILABLE_UNITS, show a table of imported rows beneath the console
+                if report_type == "AVAILABLE_UNITS":
+                    try:
+                        rows = db_repository.get_import_rows_by_batch(conn, batch_id)
+                        values: list[dict] = []
+                        for r in rows:
+                            try:
+                                raw = json.loads(r.get("raw_json") or "{}")
+                            except Exception:
+                                raw = {}
+                            values.append(
+                                {
+                                    "Unit": raw.get("Unit"),
+                                    "Status": raw.get("Status"),
+                                    "Available Date": raw.get("Available Date"),
+                                    "Move-In Ready Date": raw.get("Move-In Ready Date"),
+                                    "validation_status": r.get("validation_status"),
+                                    "conflict_flag": bool(r.get("conflict_flag")),
+                                    "conflict_reason": r.get("conflict_reason"),
+                                }
+                            )
+                        if values:
+                            st.markdown("### Available Units — Imported Rows")
+                            st.dataframe(pd.DataFrame(values), use_container_width=True, hide_index=True)
+                    except Exception:
+                        # Best-effort display; do not fail the import UI if this table fails.
+                        pass
             except Exception as e:
                 conn.rollback()
                 payload = e.to_dict() if hasattr(e, "to_dict") else None
