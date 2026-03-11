@@ -2,6 +2,34 @@ from db.errors import DatabaseIntegrityError
 from db import repository
 
 
+def test_insert_property_returns_postgres_generated_id():
+    """When property_id is IDENTITY, INSERT (name) RETURNING property_id returns the generated id."""
+    class _PostgresWithIdentity:
+        engine = "postgres"
+
+        def execute(self, sql, params=None):
+            if sql == "INSERT INTO property (name) VALUES (%s) RETURNING property_id":
+                return _FakeCursor({"property_id": 1})
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+    conn = _PostgresWithIdentity()
+    assert repository.insert_property(conn, "Thousand Oaks") == 1
+
+
+def test_insert_property_returns_postgres_generated_id_tuple_row():
+    """RETURNING result may be a tuple row; repository handles both dict and tuple."""
+    class _PostgresWithIdentity:
+        engine = "postgres"
+
+        def execute(self, sql, params=None):
+            if sql == "INSERT INTO property (name) VALUES (%s) RETURNING property_id":
+                return _FakeCursor((42,))
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+    conn = _PostgresWithIdentity()
+    assert repository.insert_property(conn, "Thousand Oaks") == 42
+
+
 class _FakeCursor:
     def __init__(self, row):
         self._row = row
