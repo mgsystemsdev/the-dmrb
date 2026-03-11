@@ -245,12 +245,17 @@ def _get_db_path():
     return ui_get_db_path()
 
 
-# Ensure DB is schema-initialized and migrated before any read path
-try:
-    ensure_database_ready(_get_db_path())
-except Exception as e:
-    st.error(f"Database initialization failed: {e}")
-    st.stop()
+# Ensure DB is schema-initialized and migrated before any read path.
+# Allow deployments to opt out of bootstrap when the Postgres schema
+# has already been created and migrated, to avoid long-running
+# initialization on managed services with strict statement timeouts.
+_skip_bootstrap_flag = os.getenv("SKIP_DB_BOOTSTRAP", "")
+if _skip_bootstrap_flag.strip().lower() not in {"1", "true", "yes", "on", "y"}:
+    try:
+        ensure_database_ready(_get_db_path())
+    except Exception as e:
+        st.error(f"Database initialization failed: {e}")
+        st.stop()
 
 # Backfill tasks for any open turnovers that have none (one-time reconciliation)
 if _BACKEND_AVAILABLE and turnover_service_mod:
