@@ -31,10 +31,10 @@ def qmark_to_percent(sql: str) -> str:
 
 
 def classify_db_error(exc: Exception) -> Exception:
-    name = exc.__class__.__name__
-    if "IntegrityError" in name:
+    mro_names = {cls.__name__ for cls in type(exc).__mro__}
+    if any("IntegrityError" in n for n in mro_names):
         return DatabaseIntegrityError(str(exc))
-    if "OperationalError" in name or "ProgrammingError" in name or "InterfaceError" in name:
+    if any("OperationalError" in n or "ProgrammingError" in n or "InterfaceError" in n for n in mro_names):
         return DatabaseOperationalError(str(exc))
     return DatabaseError(str(exc))
 
