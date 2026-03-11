@@ -249,7 +249,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER NOT NULL
 );
 INSERT INTO schema_version (singleton, version)
-VALUES (1, 13)
+VALUES (1, 14)
 ON CONFLICT (singleton) DO UPDATE SET version = EXCLUDED.version;
 
 CREATE INDEX IF NOT EXISTS idx_phase_property_id ON phase(property_id);
