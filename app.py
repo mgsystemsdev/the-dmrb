@@ -285,9 +285,7 @@ def _db_write(do_write):
 
 
 def _db_cache_identity() -> str:
-    if APP_SETTINGS.database_engine == "postgres":
-        return f"postgres:{APP_SETTINGS.database_url or ''}"
-    return f"sqlite:{_get_db_path()}"
+    return f"postgres:{APP_SETTINGS.database_url or ''}"
 
 
 def _iso_to_date(value: str) -> date:

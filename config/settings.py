@@ -59,14 +59,13 @@ def _parse_allowed_phases(raw: str | None) -> tuple[str, ...]:
 def get_settings() -> Settings:
     default_db_path = _repo_root() / "data" / "cockpit.db"
     database_path = os.environ.get("COCKPIT_DB_PATH") or os.environ.get("DMRB_DATABASE_PATH") or str(default_db_path)
-    database_engine = (get_setting("DB_ENGINE") or get_setting("DMRB_DATABASE_ENGINE") or "sqlite").strip().lower()
+    database_engine = (get_setting("DB_ENGINE") or get_setting("DMRB_DATABASE_ENGINE") or "postgres").strip().lower()
     database_url = get_setting("DATABASE_URL") or None
-    # When using Postgres, default to writes on so data persists without extra steps
     _writes_default = os.environ.get("DMRB_ENABLE_DB_WRITES_DEFAULT")
     if _writes_default is not None:
         enable_db_writes_default = _parse_bool(_writes_default, False)
     else:
-        enable_db_writes_default = True if database_engine == "postgres" else False
+        enable_db_writes_default = True
     return Settings(
         database_engine=database_engine,
         database_path=database_path,

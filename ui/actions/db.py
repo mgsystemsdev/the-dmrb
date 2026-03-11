@@ -7,19 +7,15 @@ from db.connection import get_connection
 
 
 def get_db_path() -> str:
-    """Path used for SQLite; for Postgres this is only used as a logical identifier (e.g. ensure_database_ready)."""
-    return get_settings().database_path
+    """Legacy logical DB identifier retained for import workflow plumbing."""
+    return ""
 
 
 def get_conn(backend_available: bool):
     if not backend_available:
         return None
     try:
-        settings = get_settings()
-        # Postgres: use config from settings (DATABASE_URL); no file path.
-        # SQLite: pass path so resolve_database_config uses it for sqlite_path.
-        db_path_override = None if settings.database_engine == "postgres" else get_db_path()
-        return get_connection(db_path_override)
+        return get_connection(None)
     except Exception:
         return None
 
