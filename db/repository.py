@@ -358,6 +358,11 @@ def insert_property(conn: sqlite3.Connection, name: str) -> int | None:
             raise
         if 'null value in column "property_id"' not in str(exc):
             raise
+        # Postgres leaves the transaction aborted after the failed INSERT; must roll back
+        # before running any further commands (otherwise "current transaction is aborted").
+        rollback = getattr(conn, "rollback", None)
+        if callable(rollback):
+            rollback()
 
     # Older/drifted Postgres schemas may lack IDENTITY on property.property_id.
     # Fall back to allocating the next id explicitly under a table lock.
