@@ -114,6 +114,21 @@ def get_unit_by_id(conn: sqlite3.Connection, unit_id: int):
     return _row_to_dict(cursor.fetchone())
 
 
+def list_unit_master_import_units(conn):
+    """Return importer-written unit fields only, ordered by raw unit code."""
+    cursor = conn.execute(
+        """
+        SELECT
+            unit_code_raw,
+            floor_plan AS unit_type,
+            gross_sq_ft AS square_feet
+        FROM unit
+        ORDER BY unit_code_raw
+        """
+    )
+    return _rows_to_dicts(cursor.fetchall())
+
+
 def get_unit_by_norm(conn: sqlite3.Connection, *, property_id: int, unit_code_norm: str):
     cursor = conn.execute(
         "SELECT * FROM unit WHERE property_id = ? AND unit_code_norm = ?",

@@ -1904,6 +1904,12 @@ def render_unit_master_import():
                         os.unlink(tmp_path)
                     except Exception:
                         pass
+        st.markdown("### Unit Master Import \u2014 Imported Units")
+        imported_units = db_repository.list_unit_master_import_units(conn)
+        if imported_units:
+            st.dataframe(pd.DataFrame(imported_units), use_container_width=True, hide_index=True)
+        else:
+            st.info("No units imported yet.")
     finally:
         conn.close()
 

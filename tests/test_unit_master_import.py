@@ -124,3 +124,40 @@ def test_run_unit_master_import_repair_mode_creates_and_idempotent():
         conn.close()
     finally:
         os.unlink(path)
+
+
+def test_list_unit_master_import_units_returns_import_fields_only_and_sorted():
+    path = _db_path()
+    try:
+        ensure_database_ready(path)
+        conn = get_connection(path)
+        conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'P')")
+        conn.execute(
+            """
+            INSERT INTO unit (
+                property_id, unit_code_raw, unit_code_norm, phase_code, building_code,
+                unit_number, unit_identity_key, floor_plan, gross_sq_ft
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, "7-2-201", "7-2-201", "7", "2", "201", "7-2-201", "B1", 780),
+        )
+        conn.execute(
+            """
+            INSERT INTO unit (
+                property_id, unit_code_raw, unit_code_norm, phase_code, building_code,
+                unit_number, unit_identity_key, floor_plan, gross_sq_ft
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (1, "5-1-101", "5-1-101", "5", "1", "101", "5-1-101", "A2", 672),
+        )
+        conn.commit()
+
+        rows = repository.list_unit_master_import_units(conn)
+
+        assert rows == [
+            {"unit_code_raw": "5-1-101", "unit_type": "A2", "square_feet": 672},
+            {"unit_code_raw": "7-2-201", "unit_type": "B1", "square_feet": 780},
+        ]
+        conn.close()
+    finally:
+        os.unlink(path)
