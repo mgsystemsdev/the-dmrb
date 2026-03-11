@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional
 from config.settings import get_settings
 from db import repository
 from domain.lifecycle import effective_move_out_date
-from services import import_service
 from services.risk_service import reconcile_risks_for_turnover
 from services.sla_service import reconcile_sla_for_turnover
 
@@ -101,6 +100,7 @@ def create_turnover_and_reconcile(
             "missing_moveout_count": 0,
         },
     )
+    from services import import_service
     import_service.instantiate_tasks_for_turnover(conn, turnover_id, unit_row, property_id)
     _audit(conn, turnover_id, "created", None, "manual_availability", actor, "manual")
 
@@ -152,6 +152,7 @@ def reconcile_missing_tasks(conn) -> int:
         if unit_row is None:
             continue
         unit_dict = dict(unit_row)
+        from services import import_service
         import_service.instantiate_tasks_for_turnover(conn, turnover_id, unit_dict, property_id)
         count += 1
     return count
