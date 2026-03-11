@@ -2137,13 +2137,173 @@ def render_unit_master_import():
 
 
 # ---------------------------------------------------------------------------
+# Import helpers
+# ---------------------------------------------------------------------------
+def _run_import_for_report(*, report_type: str, uploaded, active_property: dict) -> None:
+    """Shared import execution logic for a specific report_type."""
+    if uploaded is None:
+        st.warning("Upload a file first.")
+        return
+    import tempfile
+
+    db_path = _get_db_path()
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as tmp:
+        tmp.write(uploaded.getvalue())
+        tmp_path = tmp.name
+    conn = _get_conn()
+    if not conn:
+        st.error("Database not available")
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        return
+    try:
+        result = apply_import_row_workflow(
+            conn,
+            ApplyImportRow(
+                report_type=report_type,
+                file_path=tmp_path,
+                property_id=active_property["property_id"],
+                db_path=db_path,
+            ),
+        )
+        conn.commit()
+        _invalidate_ui_caches()
+        status = result.get("status", "SUCCESS")
+        batch_id = result.get("batch_id", "")
+        record_count = result.get("record_count", 0)
+        applied_count = result.get("applied_count", 0)
+        conflict_count = result.get("conflict_count", 0)
+        invalid_count = result.get("invalid_count", 0)
+        diagnostics = result.get("diagnostics", []) or []
+        if status == "NO_OP":
+            st.info(f"No-op: file already imported (checksum match). Batch ID: {batch_id} | Records: {record_count} | Applied: 0")
+        else:
+            st.success(
+                f"Batch ID: {batch_id} | Status: {status} | Records: {record_count} | "
+                f"Applied: {applied_count} | Conflicts: {conflict_count} | Invalid: {invalid_count}"
+            )
+        if diagnostics:
+            st.warning(f"Row diagnostics: {len(diagnostics)} issue(s)")
+            for diag in diagnostics[:50]:
+                row_label = f"Row {diag.get('row_index')}" if diag.get("row_index") is not None else "File"
+                column = diag.get("column")
+                column_text = f" | Column: {column}" if column else ""
+                msg = diag.get("error_message") or diag.get("reason") or "Import issue"
+                suggestion = diag.get("suggestion")
+                line = f"- {row_label}{column_text} | {msg}"
+                if suggestion:
+                    line += f" | Suggestion: {suggestion}"
+                st.write(line)
+            if len(diagnostics) > 50:
+                st.caption(f"... and {len(diagnostics) - 50} more diagnostics.")
+
+        # Per-report tables, mirroring the raw columns each import brings.
+        try:
+            rows = db_repository.get_import_rows_by_batch(conn, batch_id)
+        except Exception:
+            rows = []
+
+        if not rows:
+            return
+
+        values: list[dict] = []
+        for r in rows:
+            try:
+                raw = json.loads(r.get("raw_json") or "{}")
+            except Exception:
+                raw = {}
+
+            base = {
+                "validation_status": r.get("validation_status"),
+                "conflict_flag": bool(r.get("conflict_flag")),
+                "conflict_reason": r.get("conflict_reason"),
+            }
+
+            if report_type == "AVAILABLE_UNITS":
+                base.update(
+                    {
+                        "Unit": raw.get("Unit"),
+                        "Status": raw.get("Status"),
+                        "Available Date": raw.get("Available Date"),
+                        "Move-In Ready Date": raw.get("Move-In Ready Date"),
+                    }
+                )
+            elif report_type == "MOVE_OUTS":
+                base.update(
+                    {
+                        "Unit": raw.get("Unit"),
+                        "Move-Out Date": raw.get("Move-Out Date"),
+                    }
+                )
+            elif report_type == "PENDING_MOVE_INS":
+                base.update(
+                    {
+                        "Unit": raw.get("Unit"),
+                        "Move-In Date": raw.get("Move-In Date"),
+                    }
+                )
+            elif report_type == "PENDING_FAS":
+                base.update(
+                    {
+                        "Unit": raw.get("Unit"),
+                        "MO / Cancel Date": raw.get("MO / Cancel Date"),
+                    }
+                )
+            values.append(base)
+
+        if values:
+            if report_type == "AVAILABLE_UNITS":
+                heading = "Available Units — Imported Rows"
+            elif report_type == "MOVE_OUTS":
+                heading = "Move Outs — Imported Rows"
+            elif report_type == "PENDING_MOVE_INS":
+                heading = "Pending Move-Ins — Imported Rows"
+            elif report_type == "PENDING_FAS":
+                heading = "FAS — Imported Rows"
+            else:
+                heading = "Imported Rows"
+            st.markdown(f"### {heading}")
+            st.dataframe(pd.DataFrame(values), use_container_width=True, hide_index=True)
+    except Exception as e:
+        conn.rollback()
+        payload = e.to_dict() if hasattr(e, "to_dict") else None
+        if isinstance(payload, dict) and payload.get("error_type") == "IMPORT_VALIDATION_FAILED":
+            st.error(payload.get("message", "Import validation failed."))
+            errors = payload.get("errors") or []
+            if errors:
+                st.warning(f"Validation diagnostics: {len(errors)} issue(s)")
+                for diag in errors[:50]:
+                    row_label = f"Row {diag.get('row_index')}" if diag.get("row_index") is not None else "File"
+                    column = diag.get("column")
+                    column_text = f" | Column: {column}" if column else ""
+                    msg = diag.get("error_message") or "Validation issue"
+                    suggestion = diag.get("suggestion")
+                    line = f"- {row_label}{column_text} | {msg}"
+                    if suggestion:
+                        line += f" | Suggestion: {suggestion}"
+                    st.write(line)
+                if len(errors) > 50:
+                    st.caption(f"... and {len(errors) - 50} more diagnostics.")
+        else:
+            st.error(str(e))
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Import
 # ---------------------------------------------------------------------------
 def render_import():
     st.subheader("Import console")
-    uploaded = st.file_uploader("Select file", key="import_file", type=["csv", "xlsx", "xls"])
-    report_type = st.selectbox("Report type", ["MOVE_OUTS", "PENDING_MOVE_INS", "AVAILABLE_UNITS", "PENDING_FAS", "DMRB"], key="import_type")
-
     if not import_service_mod or not db_repository:
         st.warning("Backend or import service not available.")
         if _BACKEND_ERROR is not None:
@@ -2156,119 +2316,54 @@ def render_import():
     active_property = _render_active_property_banner()
     if active_property is None:
         return
+    # Four dedicated tabs: Available Units, Move Outs, Pending Move-Ins, FAS
+    tab_available, tab_move_outs, tab_pending_move_ins, tab_fas = st.tabs(
+        ["Available Units", "Move Outs", "Pending Move-Ins", "Final Account Statement (FAS)"]
+    )
 
-    if st.button("Run import", key="import_run"):
-        if uploaded is None:
-            st.warning("Upload a file first.")
-        else:
-            import tempfile
-            db_path = _get_db_path()
-            with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as tmp:
-                tmp.write(uploaded.getvalue())
-                tmp_path = tmp.name
-            conn = _get_conn()
-            if not conn:
-                st.error("Database not available")
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
-                return
-            try:
-                result = apply_import_row_workflow(
-                    conn,
-                    ApplyImportRow(
-                        report_type=report_type,
-                        file_path=tmp_path,
-                        property_id=active_property["property_id"],
-                        db_path=db_path,
-                    ),
-                )
-                conn.commit()
-                _invalidate_ui_caches()
-                status = result.get("status", "SUCCESS")
-                batch_id = result.get("batch_id", "")
-                record_count = result.get("record_count", 0)
-                applied_count = result.get("applied_count", 0)
-                conflict_count = result.get("conflict_count", 0)
-                invalid_count = result.get("invalid_count", 0)
-                diagnostics = result.get("diagnostics", []) or []
-                if status == "NO_OP":
-                    st.info(f"No-op: file already imported (checksum match). Batch ID: {batch_id} | Records: {record_count} | Applied: 0")
-                else:
-                    st.success(
-                        f"Batch ID: {batch_id} | Status: {status} | Records: {record_count} | "
-                        f"Applied: {applied_count} | Conflicts: {conflict_count} | Invalid: {invalid_count}"
-                    )
-                if diagnostics:
-                    st.warning(f"Row diagnostics: {len(diagnostics)} issue(s)")
-                    for diag in diagnostics[:50]:
-                        row_label = f"Row {diag.get('row_index')}" if diag.get("row_index") is not None else "File"
-                        column = diag.get("column")
-                        column_text = f" | Column: {column}" if column else ""
-                        msg = diag.get("error_message") or diag.get("reason") or "Import issue"
-                        suggestion = diag.get("suggestion")
-                        line = f"- {row_label}{column_text} | {msg}"
-                        if suggestion:
-                            line += f" | Suggestion: {suggestion}"
-                        st.write(line)
-                    if len(diagnostics) > 50:
-                        st.caption(f"... and {len(diagnostics) - 50} more diagnostics.")
-                # For AVAILABLE_UNITS, show a table of imported rows beneath the console
-                if report_type == "AVAILABLE_UNITS":
-                    try:
-                        rows = db_repository.get_import_rows_by_batch(conn, batch_id)
-                        values: list[dict] = []
-                        for r in rows:
-                            try:
-                                raw = json.loads(r.get("raw_json") or "{}")
-                            except Exception:
-                                raw = {}
-                            values.append(
-                                {
-                                    "Unit": raw.get("Unit"),
-                                    "Status": raw.get("Status"),
-                                    "Available Date": raw.get("Available Date"),
-                                    "Move-In Ready Date": raw.get("Move-In Ready Date"),
-                                    "validation_status": r.get("validation_status"),
-                                    "conflict_flag": bool(r.get("conflict_flag")),
-                                    "conflict_reason": r.get("conflict_reason"),
-                                }
-                            )
-                        if values:
-                            st.markdown("### Available Units — Imported Rows")
-                            st.dataframe(pd.DataFrame(values), use_container_width=True, hide_index=True)
-                    except Exception:
-                        # Best-effort display; do not fail the import UI if this table fails.
-                        pass
-            except Exception as e:
-                conn.rollback()
-                payload = e.to_dict() if hasattr(e, "to_dict") else None
-                if isinstance(payload, dict) and payload.get("error_type") == "IMPORT_VALIDATION_FAILED":
-                    st.error(payload.get("message", "Import validation failed."))
-                    errors = payload.get("errors") or []
-                    if errors:
-                        st.warning(f"Validation diagnostics: {len(errors)} issue(s)")
-                        for diag in errors[:50]:
-                            row_label = f"Row {diag.get('row_index')}" if diag.get("row_index") is not None else "File"
-                            column = diag.get("column")
-                            column_text = f" | Column: {column}" if column else ""
-                            msg = diag.get("error_message") or "Validation issue"
-                            suggestion = diag.get("suggestion")
-                            line = f"- {row_label}{column_text} | {msg}"
-                            if suggestion:
-                                line += f" | Suggestion: {suggestion}"
-                            st.write(line)
-                        if len(errors) > 50:
-                            st.caption(f"... and {len(errors) - 50} more diagnostics.")
-                else:
-                    st.error(str(e))
-            finally:
-                conn.close()
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
+    with tab_available:
+        uploaded_au = st.file_uploader(
+            "Available Units.csv", key="import_file_available_units", type=["csv"]
+        )
+        if st.button("Run Available Units import", key="import_run_available_units"):
+            _run_import_for_report(
+                report_type="AVAILABLE_UNITS",
+                uploaded=uploaded_au,
+                active_property=active_property,
+            )
+
+    with tab_move_outs:
+        uploaded_mo = st.file_uploader(
+            "Move Outs.csv", key="import_file_move_outs", type=["csv"]
+        )
+        if st.button("Run Move Outs import", key="import_run_move_outs"):
+            _run_import_for_report(
+                report_type="MOVE_OUTS",
+                uploaded=uploaded_mo,
+                active_property=active_property,
+            )
+
+    with tab_pending_move_ins:
+        uploaded_pmi = st.file_uploader(
+            "Pending Move-Ins.csv", key="import_file_pending_move_ins", type=["csv"]
+        )
+        if st.button("Run Pending Move-Ins import", key="import_run_pending_move_ins"):
+            _run_import_for_report(
+                report_type="PENDING_MOVE_INS",
+                uploaded=uploaded_pmi,
+                active_property=active_property,
+            )
+
+    with tab_fas:
+        uploaded_fas = st.file_uploader(
+            "Pending FAS.csv", key="import_file_fas", type=["csv"]
+        )
+        if st.button("Run FAS import", key="import_run_fas"):
+            _run_import_for_report(
+                report_type="PENDING_FAS",
+                uploaded=uploaded_fas,
+                active_property=active_property,
+            )
 
     st.subheader("Conflicts")
     st.caption("Conflict details are recorded in import_row for the batch. List conflicts here when a batch is selected (future).")
