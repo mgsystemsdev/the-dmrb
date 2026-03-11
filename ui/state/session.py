@@ -37,6 +37,8 @@ def init_session_state() -> None:
         st.session_state.page = "dmrb_board"
     if st.session_state.page in ("add_availability", "import", "dropdown_mgr", "unit_master_import"):
         st.session_state.page = "admin"
+    if "sidebar_nav" not in st.session_state:
+        st.session_state.sidebar_nav = "DMRB Board"
     if "selected_turnover_id" not in st.session_state:
         st.session_state.selected_turnover_id = None
     if "search_unit" not in st.session_state:

@@ -22,7 +22,9 @@ def render_navigation(current_page: str) -> str:
         st.session_state["sidebar_nav"] = expected_nav
 
     def _on_nav_change():
-        st.session_state.page = nav_to_page.get(st.session_state.sidebar_nav, st.session_state.page)
+        nav = st.session_state.get("sidebar_nav", expected_nav)
+        current_page = st.session_state.get("page", "dmrb_board")
+        st.session_state.page = nav_to_page.get(nav, current_page)
 
     st.sidebar.radio(
         "Navigate",
@@ -31,4 +33,4 @@ def render_navigation(current_page: str) -> str:
         key="sidebar_nav",
         on_change=_on_nav_change,
     )
-    return st.session_state.page
+    return st.session_state.get("page", "dmrb_board")
