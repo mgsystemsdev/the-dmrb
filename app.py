@@ -307,6 +307,40 @@ def _cached_list_properties(db_identity: str) -> list[dict]:
         conn.close()
 
 
+def _sync_active_property(properties: list[dict]) -> dict | None:
+    if not properties:
+        st.session_state.selected_property_id = None
+        st.session_state.selected_property_name = ""
+        return None
+    selected_id = st.session_state.get("selected_property_id")
+    active = next((p for p in properties if p["property_id"] == selected_id), None)
+    if active is None:
+        active = properties[0]
+    _set_active_property(active["property_id"], active.get("name") or f"Property {active['property_id']}")
+    return active
+
+
+def _get_active_property() -> dict | None:
+    return _sync_active_property(_cached_list_properties(_db_cache_identity()))
+
+
+def _set_active_property(property_id: int, property_name: str) -> None:
+    if st.session_state.get("selected_property_id") != property_id:
+        st.session_state.filter_phase = "All"
+        st.session_state.selected_turnover_id = None
+    st.session_state.selected_property_id = property_id
+    st.session_state.selected_property_name = property_name
+
+
+def _render_active_property_banner() -> dict | None:
+    active_property = _get_active_property()
+    if active_property is None:
+        st.info("Create a property in the Admin tab to begin.")
+        return None
+    st.caption(f"Active Property: {st.session_state.selected_property_name}")
+    return active_property
+
+
 @st.cache_data(ttl=10, show_spinner=False)
 def _cached_list_phases(db_identity: str, property_id: int | None = None) -> list[dict]:
     if not db_repository:
@@ -362,6 +396,7 @@ def _cached_list_unit_master_import_units(db_identity: str) -> list[dict]:
 @st.cache_data(ttl=5, show_spinner=False)
 def _cached_get_flag_bridge_rows(
     db_identity: str,
+    property_id: int | None,
     phase_ids: tuple[int, ...] | None,
     search_unit: str | None,
     filter_phase: str | None,
@@ -381,7 +416,7 @@ def _cached_get_flag_bridge_rows(
     try:
         return board_query_service.get_flag_bridge_rows(
             conn,
-            property_ids=None,
+            property_ids=[property_id] if property_id is not None else None,
             phase_ids=list(phase_ids) if phase_ids else None,
             search_unit=search_unit,
             filter_phase=filter_phase,
@@ -400,6 +435,7 @@ def _cached_get_flag_bridge_rows(
 @st.cache_data(ttl=5, show_spinner=False)
 def _cached_get_dmrb_board_rows(
     db_identity: str,
+    property_id: int | None,
     phase_ids: tuple[int, ...] | None,
     search_unit: str | None,
     filter_phase: str | None,
@@ -417,7 +453,7 @@ def _cached_get_dmrb_board_rows(
     try:
         return board_query_service.get_dmrb_board_rows(
             conn,
-            property_ids=None,
+            property_ids=[property_id] if property_id is not None else None,
             phase_ids=list(phase_ids) if phase_ids else None,
             search_unit=search_unit,
             filter_phase=filter_phase,
@@ -434,6 +470,7 @@ def _cached_get_dmrb_board_rows(
 @st.cache_data(ttl=5, show_spinner=False)
 def _cached_get_risk_radar_rows(
     db_identity: str,
+    property_id: int | None,
     phase_ids: tuple[int, ...] | None,
     search_unit: str | None,
     filter_phase: str | None,
@@ -448,7 +485,7 @@ def _cached_get_risk_radar_rows(
     try:
         return board_query_service.get_risk_radar_rows(
             conn,
-            property_ids=None,
+            property_ids=[property_id] if property_id is not None else None,
             phase_ids=list(phase_ids) if phase_ids else None,
             search_unit=search_unit,
             filter_phase=filter_phase,
@@ -485,18 +522,23 @@ if not _db_available():
 else:
     try:
         db_identity = _db_cache_identity()
+        active_property = _get_active_property()
         phase_ids = None
         if db_repository and st.session_state.filter_phase != "All":
-            phase_map = {str(p["phase_code"]): p["phase_id"] for p in _cached_list_phases(db_identity)}
+            phase_map = {
+                str(p["phase_code"]): p["phase_id"]
+                for p in _cached_list_phases(db_identity, active_property["property_id"] if active_property else None)
+            }
             phase_id = phase_map.get(st.session_state.filter_phase)
             if phase_id is not None:
                 phase_ids = (phase_id,)
                 st.session_state.phase_id_by_code = phase_map
         _all_rows = _cached_get_flag_bridge_rows(
             db_identity,
+            active_property["property_id"] if active_property else None,
             phase_ids,
             search_unit=st.session_state.search_unit or None,
-            filter_phase=st.session_state.filter_phase if phase_ids is None and st.session_state.filter_phase != "All" else None,
+            filter_phase=None,
             filter_status=st.session_state.filter_status if st.session_state.filter_status != "All" else None,
             filter_nvm=st.session_state.filter_nvm if st.session_state.filter_nvm != "All" else None,
             filter_assignee=st.session_state.filter_assignee if st.session_state.filter_assignee != "All" else None,
@@ -574,19 +616,21 @@ def _get_dmrb_rows():
         return []
     try:
         db_identity = _db_cache_identity()
+        active_property = _get_active_property()
         phase_ids = None
         if db_repository and st.session_state.filter_phase != "All":
             if "phase_id_by_code" not in st.session_state:
-                phases = _cached_list_phases(db_identity)
+                phases = _cached_list_phases(db_identity, active_property["property_id"] if active_property else None)
                 st.session_state.phase_id_by_code = {str(p["phase_code"]): p["phase_id"] for p in phases}
             phase_id = st.session_state.get("phase_id_by_code", {}).get(st.session_state.filter_phase)
             if phase_id is not None:
                 phase_ids = (phase_id,)
         return _cached_get_dmrb_board_rows(
             db_identity,
+            active_property["property_id"] if active_property else None,
             phase_ids,
             search_unit=st.session_state.search_unit or None,
-            filter_phase=st.session_state.filter_phase if phase_ids is None and st.session_state.filter_phase != "All" else None,
+            filter_phase=None,
             filter_status=st.session_state.filter_status if st.session_state.filter_status != "All" else None,
             filter_nvm=st.session_state.filter_nvm if st.session_state.filter_nvm != "All" else None,
             filter_assignee=st.session_state.filter_assignee if st.session_state.filter_assignee != "All" else None,
@@ -608,6 +652,9 @@ def _confirm_label(task_dict):
     return CONFIRM_VALUE_TO_LABEL.get(cur, "Pending")
 
 def render_dmrb_board():
+    active_property = _render_active_property_banner()
+    if active_property is None:
+        return
     rows = _get_dmrb_rows()
     n_active = len(rows)
     n_crit = sum(1 for r in rows if r.get("has_violation") or r.get("operational_state") == "Move-In Risk")
@@ -620,7 +667,11 @@ def render_dmrb_board():
         with c1:
             if db_repository:
                 try:
-                    phases = _cached_list_phases(_db_cache_identity())
+                    active_property = _get_active_property()
+                    phases = _cached_list_phases(
+                        _db_cache_identity(),
+                        active_property["property_id"] if active_property else None,
+                    )
                     st.session_state.phase_id_by_code = {str(p["phase_code"]): p["phase_id"] for p in phases}
                     phase_opts = ["All"] + sorted(st.session_state.phase_id_by_code.keys())
                 except Exception:
@@ -945,6 +996,7 @@ def _get_flag_bridge_rows():
         return []
     try:
         db_identity = _db_cache_identity()
+        active_property = _get_active_property()
         phase_ids = None
         if db_repository and st.session_state.filter_phase != "All":
             phase_id = st.session_state.get("phase_id_by_code", {}).get(st.session_state.filter_phase)
@@ -952,9 +1004,10 @@ def _get_flag_bridge_rows():
                 phase_ids = (phase_id,)
         return _cached_get_flag_bridge_rows(
             db_identity,
+            active_property["property_id"] if active_property else None,
             phase_ids,
             search_unit=st.session_state.search_unit or None,
-            filter_phase=st.session_state.filter_phase if phase_ids is None and st.session_state.filter_phase != "All" else None,
+            filter_phase=None,
             filter_status=st.session_state.filter_status if st.session_state.filter_status != "All" else None,
             filter_nvm=st.session_state.filter_nvm if st.session_state.filter_nvm != "All" else None,
             filter_assignee=st.session_state.filter_assignee if st.session_state.filter_assignee != "All" else None,
@@ -968,6 +1021,9 @@ def _get_flag_bridge_rows():
         return []
 
 def render_flag_bridge():
+    active_property = _render_active_property_banner()
+    if active_property is None:
+        return
     rows = _get_flag_bridge_rows()
     n_viol = sum(1 for r in rows if r.get("has_violation"))
     n_breach = sum(1 for r in rows if r.get("inspection_sla_breach") or r.get("sla_breach") or r.get("sla_movein_breach") or r.get("plan_breach"))
@@ -1068,18 +1124,20 @@ def _get_risk_radar_rows(phase_filter: str, search_unit: str, risk_level: str):
         return []
     try:
         db_identity = _db_cache_identity()
+        active_property = _get_active_property()
         phase_ids = None
         if db_repository and phase_filter != "All":
-            phases = _cached_list_phases(db_identity)
+            phases = _cached_list_phases(db_identity, active_property["property_id"] if active_property else None)
             phase_id_by_code = {str(p["phase_code"]): p["phase_id"] for p in phases}
             phase_id = phase_id_by_code.get(phase_filter)
             if phase_id is not None:
                 phase_ids = (phase_id,)
         return _cached_get_risk_radar_rows(
             db_identity,
+            active_property["property_id"] if active_property else None,
             phase_ids,
             search_unit=search_unit or None,
-            filter_phase=phase_filter if phase_ids is None and phase_filter != "All" else None,
+            filter_phase=None,
             risk_level=risk_level if risk_level != "All" else None,
             today_iso=date.today().isoformat(),
         )
@@ -1091,12 +1149,19 @@ def _get_risk_radar_rows(phase_filter: str, search_unit: str, risk_level: str):
 def render_risk_radar():
     st.subheader("Turnover Risk Radar")
     st.caption("Units most likely to miss readiness or move-in deadlines.")
+    active_property = _render_active_property_banner()
+    if active_property is None:
+        return
 
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
         if db_repository:
             try:
-                phases = _cached_list_phases(_db_cache_identity())
+                active_property = _get_active_property()
+                phases = _cached_list_phases(
+                    _db_cache_identity(),
+                    active_property["property_id"] if active_property else None,
+                )
                 phase_opts = ["All"] + sorted(str(p["phase_code"]) for p in phases)
             except Exception:
                 phase_opts = ["All", "5", "7", "8"]
@@ -1159,6 +1224,9 @@ def _parse_date_for_input(s):
         return date.today()
 
 def render_detail():
+    active_property = _render_active_property_banner()
+    if active_property is None:
+        return
     if st.session_state.selected_turnover_id is None:
         st.subheader("Turnover Detail")
         unit_search = st.text_input("Unit code", key="detail_unit_search")
@@ -1169,6 +1237,7 @@ def render_detail():
             try:
                 rows = _cached_get_dmrb_board_rows(
                     _db_cache_identity(),
+                    st.session_state.get("selected_property_id"),
                     None,
                     None,
                     None,
@@ -1733,6 +1802,8 @@ def render_detail():
 def render_dropdown_manager():
     st.subheader("Dropdown Manager")
     st.caption("Manage assignees per task type. Execution statuses, confirmation statuses, and blocking reasons are system-controlled and cannot be changed here.")
+    if _render_active_property_banner() is None:
+        return
 
     cfg = st.session_state.dropdown_config
     task_assignees = cfg.get("task_assignees", {})
@@ -1820,6 +1891,8 @@ def render_dropdown_manager():
 def render_property_structure():
     st.subheader("Property structure")
     st.caption("Read-only view: property → phase → building → unit. Use to validate hierarchy migration.")
+    if _render_active_property_banner() is None:
+        return
     if not db_repository:
         st.info("Backend not available.")
         return
@@ -1892,33 +1965,14 @@ def render_add_availability():
         return
     if not st.session_state.get("enable_db_writes"):
         st.caption("Turn on **Enable DB Writes** in the sidebar to submit.")
+    active_property = _render_active_property_banner()
+    if active_property is None:
+        return
     if not _db_available():
         st.error("Database not available")
         return
     db_identity = _db_cache_identity()
-    properties = _cached_list_properties(db_identity)
-    if not properties:
-        st.error("No properties in database. Add a property first.")
-        if not st.session_state.get("enable_db_writes"):
-            st.caption("Turn on **Enable DB Writes** in the sidebar to save.")
-        name = st.text_input("Property name", value="My Property", key="add_avail_new_property_name")
-        if st.button("Create property", key="add_avail_create_property"):
-            if not st.session_state.get("enable_db_writes"):
-                st.error("Enable DB Writes in the sidebar first.")
-            else:
-                def do_create(conn):
-                    db_repository.insert_property(conn, name or "My Property")
-                if _db_write(do_create):
-                    st.success("Property created. Refreshing.")
-                    st.rerun()
-        return
-    property_id = properties[0]["property_id"] if len(properties) == 1 else None
-    if property_id is None:
-        prop_opts = [f"{p.get('name') or p['property_id']} (id={p['property_id']})" for p in properties]
-        sel = st.selectbox("Property", prop_opts, key="add_avail_property")
-        property_id = int(sel.split("(id=")[1].rstrip(")"))
-    else:
-        st.caption(f"Property: {properties[0].get('name') or property_id}")
+    property_id = active_property["property_id"]
     phases = _cached_list_phases(db_identity, property_id)
     if not phases:
         st.warning("No phases for this property. Run **Admin → Unit Master Import** with your Units CSV first to populate Phase and Building dropdowns, or create one phase below.")
@@ -2028,28 +2082,14 @@ def render_unit_master_import():
     if not st.session_state.get("enable_db_writes"):
         st.warning("Enable DB Writes in the sidebar to run import.")
         return
+    active_property = _render_active_property_banner()
+    if active_property is None:
+        return
     if not _db_available():
         st.error("Database not available")
         return
     db_identity = _db_cache_identity()
-    properties = _cached_list_properties(db_identity)
-    if not properties:
-        st.error("No properties in database. Add a property first.")
-        name = st.text_input("Property name", value="My Property", key="um_import_new_property_name")
-        if st.button("Create property", key="um_import_create_property"):
-            def do_create(conn):
-                db_repository.insert_property(conn, name or "My Property")
-            if _db_write(do_create):
-                st.success("Property created. Refreshing.")
-                st.rerun()
-        return
-    property_id = properties[0]["property_id"] if len(properties) == 1 else None
-    if property_id is None:
-        prop_opts = [f"{p.get('name') or p['property_id']} (id={p['property_id']})" for p in properties]
-        sel = st.selectbox("Property", prop_opts, key="um_import_property")
-        property_id = int(sel.split("(id=")[1].rstrip(")"))
-    else:
-        st.caption(f"Property: {properties[0].get('name') or property_id}")
+    property_id = active_property["property_id"]
     strict_mode = st.checkbox("Strict mode (fail if unit not found; no creates)", value=False, key="um_import_strict")
     uploaded = st.file_uploader("Units.csv", type=["csv"], key="um_import_file")
     if st.button("Run Unit Master Import", key="um_import_run"):
@@ -2110,6 +2150,9 @@ def render_import():
     if not st.session_state.get("enable_db_writes"):
         st.warning("Enable **Enable DB Writes** in the sidebar to run import.")
         return
+    active_property = _render_active_property_banner()
+    if active_property is None:
+        return
 
     if st.button("Run import", key="import_run"):
         if uploaded is None:
@@ -2134,7 +2177,7 @@ def render_import():
                     ApplyImportRow(
                         report_type=report_type,
                         file_path=tmp_path,
-                        property_id=APP_SETTINGS.default_property_id,
+                        property_id=active_property["property_id"],
                         db_path=db_path,
                     ),
                 )
@@ -2204,6 +2247,8 @@ def render_import():
 def render_exports():
     st.subheader("Export Reports")
     st.caption("Exports always include all open turnovers (closed/canceled excluded), regardless of current screen filters.")
+    if _render_active_property_banner() is None:
+        return
     if not export_service_mod:
         st.warning("Export service is not available.")
         return
@@ -2278,17 +2323,67 @@ def render_exports():
 def render_admin():
     st.subheader("Admin")
 
-    # Enable DB Writes: in Admin so it's not in the main sidebar
-    st.checkbox(
-        "Enable DB Writes (⚠ irreversible)",
-        value=st.session_state.get("enable_db_writes", False),
-        key="enable_db_writes",
-        on_change=lambda: st.rerun(),
-    )
+    admin_col1, admin_col2, admin_col3 = st.columns([1.2, 1.6, 1.6])
+    with admin_col1:
+        st.checkbox(
+            "Enable DB Writes (⚠ irreversible)",
+            value=st.session_state.get("enable_db_writes", False),
+            key="enable_db_writes",
+            on_change=lambda: st.rerun(),
+        )
+    properties = _cached_list_properties(_db_cache_identity())
+    active_property = _sync_active_property(properties)
+    with admin_col2:
+        if properties:
+            property_options = {}
+            for p in properties:
+                property_name = p.get("name") or f"Property {p['property_id']}"
+                property_options[f"{property_name} (id={p['property_id']})"] = p
+            active_label = next(
+                (label for label, prop in property_options.items() if prop["property_id"] == active_property["property_id"]),
+                next(iter(property_options)),
+            )
+            selected_label = st.selectbox(
+                "Active Property",
+                list(property_options.keys()),
+                index=list(property_options.keys()).index(active_label),
+                key="admin_active_property",
+            )
+            selected_property = property_options[selected_label]
+            _set_active_property(
+                selected_property["property_id"],
+                selected_property.get("name") or f"Property {selected_property['property_id']}",
+            )
+        else:
+            st.caption("Create a property in the Admin tab to begin.")
+    with admin_col3:
+        new_property_name = st.text_input("New Property", value="", key="admin_new_property_name", placeholder="Property name")
+        if st.button("Create Property", key="admin_create_property"):
+            if not st.session_state.get("enable_db_writes"):
+                st.error("Enable DB Writes in the Admin tab first.")
+            elif not (new_property_name or "").strip():
+                st.error("Enter a property name.")
+            else:
+                created = {"property_id": None}
+
+                def do_create(conn):
+                    created["property_id"] = db_repository.insert_property(conn, (new_property_name or "").strip())
+
+                if _db_write(do_create):
+                    property_id = created["property_id"]
+                    property_name = (new_property_name or "").strip()
+                    _set_active_property(property_id, property_name)
+                    st.success(f"Active Property: {property_name}")
+                    st.rerun()
+
     if st.session_state.get("enable_db_writes"):
         st.caption("DB writes are **on**. Edits and status changes will be persisted.")
     else:
         st.caption("DB writes are **off**. You can browse and export; turn this on here to save changes.")
+    if st.session_state.get("selected_property_id") is not None:
+        st.caption(f"Active Property: {st.session_state.get('selected_property_name')}")
+    else:
+        st.caption("Create a property in the Admin tab to begin.")
 
     tab_add, tab_import, tab_unit_master, tab_export, tab_dropdown = st.tabs(
         ["Add Unit", "Import", "Unit Master Import", "Exports", "Dropdown Manager"]
