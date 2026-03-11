@@ -2370,9 +2370,12 @@ def render_admin():
                 if _db_write(do_create):
                     property_id = created["property_id"]
                     property_name = (new_property_name or "").strip()
-                    _set_active_property(property_id, property_name)
-                    st.success(f"Active Property: {property_name}")
-                    st.rerun()
+                    if property_id is None:
+                        st.error("Property creation failed: no property_id was returned.")
+                    else:
+                        _set_active_property(property_id, property_name)
+                        st.success(f"Active Property: {property_name}")
+                        st.rerun()
 
     if st.session_state.get("enable_db_writes"):
         st.caption("DB writes are **on**. Edits and status changes will be persisted.")

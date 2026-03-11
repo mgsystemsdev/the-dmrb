@@ -338,12 +338,18 @@ def list_properties(conn: sqlite3.Connection) -> list:
     return _rows_to_dicts(cursor.fetchall())
 
 
-def insert_property(conn: sqlite3.Connection, name: str) -> int:
-    """Insert a property with next available property_id. Returns property_id."""
-    row = conn.execute("SELECT COALESCE(MAX(property_id), 0) + 1 FROM property").fetchone()
-    next_id = row[0]
-    conn.execute("INSERT INTO property (property_id, name) VALUES (?, ?)", (next_id, name))
-    return next_id
+def insert_property(conn: sqlite3.Connection, name: str) -> int | None:
+    """Insert a property and return the database-generated property_id."""
+    cursor = conn.execute(
+        "INSERT INTO property (name) VALUES (%s) RETURNING property_id",
+        (name,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row.get("property_id")
+    return row[0]
 
 
 def list_phases(conn: sqlite3.Connection, *, property_id: int | None = None) -> list:
