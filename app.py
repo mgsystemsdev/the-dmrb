@@ -9,7 +9,6 @@ import os
 import streamlit as st
 
 from ui.components.sidebar import render_navigation
-from ui.components.sidebar_flags import render_top_flags
 from ui.data.backend import (
     BACKEND_AVAILABLE,
     BACKEND_ERROR,
@@ -20,6 +19,11 @@ from ui.data.backend import (
 )
 from ui.router import render_current_page
 from ui.state import init_session_state
+
+try:
+    from ui.components.sidebar_flags import render_top_flags
+except ImportError:
+    render_top_flags = None
 
 st.set_page_config(layout="wide", page_title="The DMRB — Apartment Turn Tracker")
 
@@ -89,5 +93,6 @@ if BACKEND_AVAILABLE and turnover_service_mod:
         pass
 
 render_navigation(st.session_state.page)
-render_top_flags()
+if render_top_flags is not None:
+    render_top_flags()
 render_current_page()
