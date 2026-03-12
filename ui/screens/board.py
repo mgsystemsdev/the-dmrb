@@ -251,11 +251,13 @@ def render() -> None:
 
         nvm_full = row.get("nvm", "—")
 
+        status_display = row.get("availability_status") or row.get("manual_ready_status", "Vacant not ready")
+
         info_data.append(
             {
                 "▶": False,
                 "Unit": row.get("unit_code", ""),
-                "Status": row.get("manual_ready_status", "Vacant not ready"),
+                "Status": status_display,
                 "Move-Out": parse_date(row.get("move_out_date")),
                 "Ready Date": parse_date(row.get("report_ready_date")),
                 "DV": row.get("dv"),
@@ -275,7 +277,7 @@ def render() -> None:
             "▶": False,
             "Unit": row.get("unit_code", ""),
             "⚖": legal_dot,
-            "Status": row.get("manual_ready_status", "Vacant not ready"),
+            "Status": status_display,
             "DV": row.get("dv"),
             "DTBR": row.get("dtbr"),
         }

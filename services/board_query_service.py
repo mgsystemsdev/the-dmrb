@@ -97,6 +97,7 @@ def _build_flat_row(
         "legal_confirmation_source": turnover.get("legal_confirmation_source"),
         "legal_confirmed_at": turnover.get("legal_confirmed_at"),
         "manual_ready_status": turnover.get("manual_ready_status") or "Vacant not ready",
+        "availability_status": turnover.get("availability_status"),
         "move_out_manual_override_at": turnover.get("move_out_manual_override_at"),
         "ready_manual_override_at": turnover.get("ready_manual_override_at"),
         "move_in_manual_override_at": turnover.get("move_in_manual_override_at"),
