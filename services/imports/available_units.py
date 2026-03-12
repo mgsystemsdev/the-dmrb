@@ -88,11 +88,15 @@ def apply_available_units(
     today = date.fromisoformat(now_iso[:10]) if now_iso and len(now_iso) >= 10 else date.today()
 
     for row_index, row in enumerate(rows, start=1):
+        raw_status = row.get("status")
+        normalized_status = None
+        if isinstance(raw_status, str):
+            normalized_status = raw_status.strip().lower() or None
         ready_iso = _to_iso_date(row.get("report_ready_date"))
         unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=row["unit_norm"])
         if unit_row is None:
             # Get-or-create unit when status allows turnover creation (same as Move-Outs), so Vacant/Beacon/On notice rows create the unit and turnover.
-            if _status_allows_turnover_creation(row.get("status")):
+            if _status_allows_turnover_creation(normalized_status):
                 unit_row = _ensure_unit(conn, property_id, row["unit_raw"], row["unit_norm"])
             else:
                 _append_diagnostic(
@@ -115,8 +119,30 @@ def apply_available_units(
         open_turnover = _row_to_dict(repository.get_open_turnover_by_unit(conn, unit_id))
         if open_turnover is None:
             # No open turnover: create one when status indicates vacancy (vacancy truth); else ignore.
-            if _status_allows_turnover_creation(row.get("status")):
-                move_out_date = row.get("available_date") or row.get("report_ready_date") or today
+            if _status_allows_turnover_creation(normalized_status):
+                available_date = row.get("available_date")
+                if available_date is None:
+                    _append_diagnostic(
+                        diagnostics,
+                        row_index=row_index,
+                        column="Available Date",
+                        error_type="MISSING_REQUIRED_FIELD",
+                        error_message="Missing required field 'Available Date' for vacancy status.",
+                        suggestion="Populate a valid available date (YYYY-MM-DD) for vacant units.",
+                    )
+                    _write_import_row(
+                        conn,
+                        batch_id,
+                        row,
+                        validation_status="INVALID",
+                        conflict_flag=1,
+                        conflict_reason="AVAILABLE_DATE_MISSING",
+                        move_out_date=None,
+                        move_in_date=None,
+                    )
+                    invalid_count += 1
+                    continue
+                move_out_date = available_date
                 move_out_iso = move_out_date.isoformat()
                 source_turnover_key = f"{property_id}:{row['unit_norm']}:{move_out_iso}"
                 tid = turnover_service.create_turnover_and_reconcile(
