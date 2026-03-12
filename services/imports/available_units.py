@@ -335,7 +335,9 @@ def apply_available_units(
                     continue
                 tid = new_turnover["turnover_id"]
                 status_val = (row.get("status") or "").strip() or None
-                ready_iso_from_row = _to_iso_date(row.get("report_ready_date"))
+                # Prefer explicit Move-In Ready Date, but when missing fall back to Available Date
+                ready_date_value = row.get("report_ready_date") or available_date
+                ready_iso_from_row = _to_iso_date(ready_date_value)
                 available_date_iso = _to_iso_date(row.get("available_date")) or ready_iso_from_row
                 update_fields = {
                     "report_ready_date": ready_iso_from_row,
@@ -405,60 +407,27 @@ def apply_available_units(
                     )
             continue
         # Open turnover exists: update report_ready_date, available_date, availability_status (respect overrides).
-        if row.get("report_ready_date") is None:
-            _write_import_row(
-                conn, batch_id, row,
-                validation_status="OK",
-                move_out_date=None,
-                move_in_date=None,
-            )
-        else:
-            old_ready = open_turnover["report_ready_date"]
-            tid = open_turnover["turnover_id"]
-            override_at = open_turnover.get("ready_manual_override_at")
-            current_ready_norm = _normalize_date_str(old_ready)
-            incoming_ready_norm = _normalize_date_str(ready_iso)
-            old_available = open_turnover.get("available_date")
-            status_val = (row.get("status") or "").strip() or None
-            status_override_at = open_turnover.get("status_manual_override_at")
-            current_status_norm = _normalize_status(open_turnover.get("availability_status"))
-            incoming_status_norm = _normalize_status(status_val)
-            old_status = open_turnover.get("availability_status")
+        old_ready = open_turnover["report_ready_date"]
+        tid = open_turnover["turnover_id"]
+        override_at = open_turnover.get("ready_manual_override_at")
+        current_ready_norm = _normalize_date_str(old_ready)
+        incoming_ready_norm = _normalize_date_str(ready_iso) if ready_iso else None
+        old_available = open_turnover.get("available_date")
+        status_val = (row.get("status") or "").strip() or None
+        status_override_at = open_turnover.get("status_manual_override_at")
+        current_status_norm = _normalize_status(open_turnover.get("availability_status"))
+        incoming_status_norm = _normalize_status(status_val)
+        old_status = open_turnover.get("availability_status")
 
-            if override_at is not None:
-                if current_ready_norm == incoming_ready_norm:
-                    update_fields = {"report_ready_date": ready_iso, "updated_at": now_iso, "ready_manual_override_at": None}
-                    _audit(conn, tid, "manual_override_cleared", None, "report_ready_date|validated_by=AVAILABLE_UNITS", actor, corr_id)
-                    update_fields["available_date"] = ready_iso
-                    if old_available != ready_iso:
-                        _audit(conn, tid, "available_date", old_available, ready_iso, actor, corr_id)
-                    if status_override_at is not None:
-                        if current_status_norm == incoming_status_norm:
-                            update_fields["availability_status"] = status_val
-                            update_fields["status_manual_override_at"] = None
-                            _audit(conn, tid, "manual_override_cleared", None, "availability_status|validated_by=AVAILABLE_UNITS", actor, corr_id)
-                        else:
-                            _write_skip_audit_if_new(conn, tid, "availability_status", "AVAILABLE_UNITS", incoming_status_norm, actor, corr_id)
-                    else:
-                        update_fields["availability_status"] = status_val
-                        if old_status != status_val:
-                            _audit(conn, tid, "availability_status", old_status, status_val, actor, corr_id)
-                    repository.update_turnover_fields(conn, tid, update_fields)
-                    applied_count += 1
-                else:
-                    _write_skip_audit_if_new(conn, tid, "report_ready_date", "AVAILABLE_UNITS", incoming_ready_norm, actor, corr_id)
-                    if status_override_at is not None:
-                        if current_status_norm == incoming_status_norm:
-                            uf = {"status_manual_override_at": None, "availability_status": status_val, "updated_at": now_iso}
-                            _audit(conn, tid, "manual_override_cleared", None, "availability_status|validated_by=AVAILABLE_UNITS", actor, corr_id)
-                            repository.update_turnover_fields(conn, tid, uf)
-                        else:
-                            _write_skip_audit_if_new(conn, tid, "availability_status", "AVAILABLE_UNITS", incoming_status_norm, actor, corr_id)
-            else:
-                update_fields = {"report_ready_date": ready_iso, "updated_at": now_iso}
-                if old_ready != ready_iso:
-                    _audit(conn, tid, "report_ready_date", old_ready, ready_iso, actor, corr_id)
-                    applied_count += 1
+        # Determine which date to treat as the incoming "ready" signal: prefer explicit ready date,
+        # but fall back to available_date when ready is missing.
+        effective_ready_iso = ready_iso or _to_iso_date(available_date)
+
+        if override_at is not None and ready_iso is not None:
+            # Ready-date override exists and we have an incoming ready date to compare.
+            if current_ready_norm == incoming_ready_norm:
+                update_fields = {"report_ready_date": ready_iso, "updated_at": now_iso, "ready_manual_override_at": None}
+                _audit(conn, tid, "manual_override_cleared", None, "report_ready_date|validated_by=AVAILABLE_UNITS", actor, corr_id)
                 update_fields["available_date"] = ready_iso
                 if old_available != ready_iso:
                     _audit(conn, tid, "available_date", old_available, ready_iso, actor, corr_id)
@@ -474,11 +443,46 @@ def apply_available_units(
                     if old_status != status_val:
                         _audit(conn, tid, "availability_status", old_status, status_val, actor, corr_id)
                 repository.update_turnover_fields(conn, tid, update_fields)
-            _write_import_row(
-                conn, batch_id, row,
-                validation_status="OK",
-                move_out_date=None,
-                move_in_date=None,
-            )
+                applied_count += 1
+            else:
+                _write_skip_audit_if_new(conn, tid, "report_ready_date", "AVAILABLE_UNITS", incoming_ready_norm, actor, corr_id)
+                if status_override_at is not None:
+                    if current_status_norm == incoming_status_norm:
+                        uf = {"status_manual_override_at": None, "availability_status": status_val, "updated_at": now_iso}
+                        _audit(conn, tid, "manual_override_cleared", None, "availability_status|validated_by=AVAILABLE_UNITS", actor, corr_id)
+                        repository.update_turnover_fields(conn, tid, uf)
+                    else:
+                        _write_skip_audit_if_new(conn, tid, "availability_status", "AVAILABLE_UNITS", incoming_status_norm, actor, corr_id)
+        else:
+            update_fields: dict[str, Any] = {"updated_at": now_iso}
+            # If we have an effective ready date (ready or available), keep report_ready_date aligned.
+            if effective_ready_iso is not None:
+                if old_ready != effective_ready_iso:
+                    update_fields["report_ready_date"] = effective_ready_iso
+                    _audit(conn, tid, "report_ready_date", old_ready, effective_ready_iso, actor, corr_id)
+                    applied_count += 1
+                update_fields["available_date"] = effective_ready_iso
+                if old_available != effective_ready_iso:
+                    _audit(conn, tid, "available_date", old_available, effective_ready_iso, actor, corr_id)
+            # Always attempt to synchronize availability_status with override protection.
+            if status_override_at is not None:
+                if current_status_norm == incoming_status_norm:
+                    update_fields["availability_status"] = status_val
+                    update_fields["status_manual_override_at"] = None
+                    _audit(conn, tid, "manual_override_cleared", None, "availability_status|validated_by=AVAILABLE_UNITS", actor, corr_id)
+                else:
+                    _write_skip_audit_if_new(conn, tid, "availability_status", "AVAILABLE_UNITS", incoming_status_norm, actor, corr_id)
+            else:
+                update_fields["availability_status"] = status_val
+                if old_status != status_val:
+                    _audit(conn, tid, "availability_status", old_status, status_val, actor, corr_id)
+            repository.update_turnover_fields(conn, tid, update_fields)
+
+        _write_import_row(
+            conn, batch_id, row,
+            validation_status="OK",
+            move_out_date=None,
+            move_in_date=None,
+        )
 
     return (applied_count, conflict_count, invalid_count, diagnostics)
