@@ -97,6 +97,7 @@ def _build_flat_row(
         "move_out_date": turnover.get("move_out_date"),
         "move_in_date": turnover.get("move_in_date"),
         "report_ready_date": effective_report_ready_date,
+        "ready_date": effective_report_ready_date,
         "scheduled_move_out_date": turnover.get("scheduled_move_out_date"),
         "confirmed_move_out_date": turnover.get("confirmed_move_out_date"),
         "legal_confirmation_source": turnover.get("legal_confirmation_source"),
