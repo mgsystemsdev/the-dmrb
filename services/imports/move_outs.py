@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from typing import Any
 
 import pandas as pd
@@ -18,9 +19,9 @@ from services.imports.common import (
     _to_iso_date,
     _write_import_row,
     _write_skip_audit_if_new,
+    find_or_create_turnover_for_unit,
 )
-from services.imports.constants import OUTCOME_APPLIED, OUTCOME_CONFLICT, OUTCOME_SKIPPED_OVERRIDE
-from services.imports.tasks import _instantiate_tasks_for_turnover_impl
+from services.imports.constants import OUTCOME_APPLIED, OUTCOME_SKIPPED_OVERRIDE
 from services.imports.validation import _normalize_date_str, _validation_status_from_outcome
 
 
@@ -85,10 +86,6 @@ def apply_move_outs(
         open_turnover = _row_to_dict(repository.get_open_turnover_by_unit(conn, unit_id))
         if open_turnover is not None:
             row_outcome = OUTCOME_APPLIED
-            if open_turnover.get("legal_confirmation_source") is None:
-                existing_move_out = open_turnover["move_out_date"]
-            else:
-                existing_move_out = None
             tid = open_turnover["turnover_id"]
             override_at = open_turnover.get("move_out_manual_override_at")
             current_sched = _normalize_date_str(open_turnover.get("scheduled_move_out_date"))
@@ -112,31 +109,25 @@ def apply_move_outs(
                     _write_skip_audit_if_new(conn, tid, "scheduled_move_out_date", "MOVE_OUTS", incoming_norm, actor, corr_id)
                     row_outcome = OUTCOME_SKIPPED_OVERRIDE
             else:
-                if existing_move_out is not None and existing_move_out != move_out_iso:
-                    _append_diagnostic(
-                        diagnostics,
-                        row_index=row_index,
-                        column="Move-Out Date",
-                        error_type="CONFLICT",
-                        error_message="Move-out date does not match existing open turnover.",
-                        suggestion="Review source data and existing turnover move-out date before retrying.",
-                    )
-                    _write_import_row(
-                        conn, batch_id, row,
-                        validation_status=_validation_status_from_outcome(OUTCOME_CONFLICT),
-                        conflict_flag=1,
-                        conflict_reason="MOVE_OUT_DATE_MISMATCH_FOR_OPEN_TURNOVER",
-                        move_out_date=move_out_iso,
-                        move_in_date=None,
-                    )
-                    conflict_count += 1
-                    continue
-                repository.update_turnover_fields(conn, tid, {
+                update_fields: dict[str, Any] = {
                     "last_seen_moveout_batch_id": batch_id,
                     "missing_moveout_count": 0,
                     "updated_at": now_iso,
-                    "scheduled_move_out_date": move_out_iso,
-                })
+                }
+                # When there is no legal confirmation and no manual override,
+                # treat differing move-out dates as corrections rather than conflicts.
+                if open_turnover.get("legal_confirmation_source") is None:
+                    existing_move_out_iso = open_turnover["move_out_date"]
+                    existing_norm = _normalize_date_str(existing_move_out_iso)
+                    if existing_norm != incoming_norm:
+                        update_fields["move_out_date"] = move_out_iso
+                        _audit(conn, tid, "move_out_date", existing_move_out_iso, move_out_iso, actor, corr_id)
+                # Always keep scheduled_move_out_date aligned with the import.
+                existing_sched = open_turnover.get("scheduled_move_out_date")
+                if existing_sched != move_out_iso:
+                    update_fields["scheduled_move_out_date"] = move_out_iso
+                    _audit(conn, tid, "scheduled_move_out_date", existing_sched, move_out_iso, actor, corr_id)
+                repository.update_turnover_fields(conn, tid, update_fields)
             seen_unit_ids.add(unit_id)
             _write_import_row(
                 conn, batch_id, row,
@@ -147,29 +138,40 @@ def apply_move_outs(
             if row_outcome == OUTCOME_APPLIED:
                 applied_count += 1
         else:
-            turnover_id = repository.insert_turnover(conn, {
-                "property_id": property_id,
-                "unit_id": unit_id,
-                "source_turnover_key": f"{property_id}:{row['unit_norm']}:{move_out_iso}",
-                "move_out_date": move_out_iso,
-                "move_in_date": None,
-                "report_ready_date": None,
-                "created_at": now_iso,
-                "updated_at": now_iso,
-                "last_seen_moveout_batch_id": batch_id,
-                "missing_moveout_count": 0,
-                "scheduled_move_out_date": move_out_iso,
-            })
-            _audit(conn, turnover_id, "created", None, "import:MOVE_OUTS", actor, corr_id)
-            _instantiate_tasks_for_turnover_impl(conn, turnover_id, unit_row, property_id)
-            seen_unit_ids.add(unit_id)
-            _write_import_row(
-                conn, batch_id, row,
-                validation_status=_validation_status_from_outcome(OUTCOME_APPLIED),
-                move_out_date=move_out_iso,
-                move_in_date=None,
+            # No open turnover: create one via shared helper so tasks/SLA/risk flows
+            # are handled by turnover_service.
+            move_out_date = row["move_out_date"]
+            move_out_iso = _to_iso_date(move_out_date)
+            today = date.fromisoformat(now_iso[:10]) if now_iso and len(now_iso) >= 10 else date.today()
+            source_turnover_key = f"{property_id}:{row['unit_norm']}:{move_out_iso}"
+            new_turnover = find_or_create_turnover_for_unit(
+                conn=conn,
+                property_id=property_id,
+                unit_row=unit_row,
+                move_out_date=move_out_date,
+                source_turnover_key=source_turnover_key,
+                today=today,
+                actor=actor,
+                corr_id=corr_id,
+                report_ready_date=None,
             )
-            applied_count += 1
+            if new_turnover is not None:
+                turnover_id = new_turnover["turnover_id"]
+                repository.update_turnover_fields(conn, turnover_id, {
+                    "last_seen_moveout_batch_id": batch_id,
+                    "missing_moveout_count": 0,
+                    "scheduled_move_out_date": move_out_iso,
+                    "updated_at": now_iso,
+                })
+                _audit(conn, turnover_id, "created", None, "import:MOVE_OUTS", actor, corr_id)
+                seen_unit_ids.add(unit_id)
+                _write_import_row(
+                    conn, batch_id, row,
+                    validation_status=_validation_status_from_outcome(OUTCOME_APPLIED),
+                    move_out_date=move_out_iso,
+                    move_in_date=None,
+                )
+                applied_count += 1
 
     return (applied_count, conflict_count, invalid_count, diagnostics, seen_unit_ids)
 

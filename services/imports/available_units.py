@@ -9,7 +9,6 @@ import pandas as pd
 
 from db import repository
 
-from services import turnover_service
 from services.imports.common import (
     _append_diagnostic,
     _audit,
@@ -20,6 +19,7 @@ from services.imports.common import (
     _to_iso_date,
     _write_import_row,
     _write_skip_audit_if_new,
+    find_or_create_turnover_for_unit,
 )
 from services.imports.validation import _normalize_date_str, _normalize_status
 
@@ -300,18 +300,40 @@ def apply_available_units(
                 move_out_date = available_date
                 move_out_iso = move_out_date.isoformat()
                 source_turnover_key = f"{property_id}:{row['unit_norm']}:{move_out_iso}"
-                tid = turnover_service.create_turnover_and_reconcile(
+                new_turnover = find_or_create_turnover_for_unit(
                     conn=conn,
-                    unit_id=unit_id,
-                    unit_row=unit_row,
                     property_id=property_id,
-                    source_turnover_key=source_turnover_key,
+                    unit_row=unit_row,
                     move_out_date=move_out_date,
-                    move_in_date=None,
-                    report_ready_date=row.get("report_ready_date"),
+                    source_turnover_key=source_turnover_key,
                     today=today,
                     actor=actor,
+                    corr_id=corr_id,
+                    report_ready_date=row.get("report_ready_date"),
                 )
+                if new_turnover is None:
+                    # Should not happen when move_out_date is provided, but guard defensively.
+                    _append_diagnostic(
+                        diagnostics,
+                        row_index=row_index,
+                        column="Unit",
+                        error_type="TURNOVER_CREATION_FAILED",
+                        error_message="Failed to create turnover from availability row.",
+                        suggestion="Review import row and turnover state before retrying.",
+                    )
+                    _write_import_row(
+                        conn,
+                        batch_id,
+                        row,
+                        validation_status="CONFLICT",
+                        conflict_flag=1,
+                        conflict_reason="TURNOVER_CREATION_FAILED",
+                        move_out_date=None,
+                        move_in_date=None,
+                    )
+                    conflict_count += 1
+                    continue
+                tid = new_turnover["turnover_id"]
                 status_val = (row.get("status") or "").strip() or None
                 ready_iso_from_row = _to_iso_date(row.get("report_ready_date"))
                 available_date_iso = _to_iso_date(row.get("available_date")) or ready_iso_from_row

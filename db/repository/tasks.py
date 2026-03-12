@@ -134,7 +134,12 @@ def ensure_default_task_templates(
         if templates:
             return
         row = conn.execute("SELECT property_id FROM phase WHERE phase_id = ?", (phase_id,)).fetchone()
-        prop_id = row[0] if row else None
+        if row is None:
+            prop_id = None
+        elif isinstance(row, dict):
+            prop_id = row.get("property_id")
+        else:
+            prop_id = row[0]
         for sort_order, (task_type, required, blocking) in enumerate(DEFAULT_TASK_TYPES):
             insert_task_template(
                 conn,

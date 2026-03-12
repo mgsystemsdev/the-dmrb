@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from db import repository
 from domain import unit_identity
-
+from services import turnover_service
 from services.imports.constants import VALID_PHASES
 
 
@@ -165,3 +165,46 @@ def _write_skip_audit_if_new(
         return
     new_value = f"{field_key}|report={report_type}|v={current}"
     _audit(conn, turnover_id, "import_skipped_due_to_manual_override", None, new_value, actor, correlation_id)
+
+
+def find_or_create_turnover_for_unit(
+    conn,
+    property_id: int,
+    unit_row: dict,
+    *,
+    move_out_date: Optional[date],
+    source_turnover_key: str,
+    today: date,
+    actor: str,
+    corr_id: str,
+    report_ready_date: Optional[date] = None,
+) -> Optional[dict]:
+    """
+    Find an open turnover for the given unit or create one using turnover_service.create_turnover_and_reconcile.
+
+    Creation path delegates to turnover_service so task instantiation, SLA, and risk reconciliation
+    follow the standard lifecycle behavior. Importers remain responsible for reconciling their own
+    authoritative fields on the returned turnover.
+    """
+    unit_id = unit_row["unit_id"]
+    existing = repository.get_open_turnover_by_unit(conn, unit_id)
+    existing_dict = _row_to_dict(existing)
+    if existing_dict is not None:
+        return existing_dict
+
+    if move_out_date is None:
+        return None
+
+    turnover_id = turnover_service.create_turnover_and_reconcile(
+        conn=conn,
+        unit_id=unit_id,
+        unit_row=unit_row,
+        property_id=property_id,
+        source_turnover_key=source_turnover_key,
+        move_out_date=move_out_date,
+        move_in_date=None,
+        report_ready_date=report_ready_date,
+        today=today,
+        actor=actor,
+    )
+    return _row_to_dict(repository.get_turnover_by_id(conn, turnover_id))

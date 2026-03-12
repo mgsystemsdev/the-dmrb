@@ -1,0 +1,1 @@
+{"sessionId": "47f25f", "id": "log_1773321652935", "timestamp": 1773321652935, "location": "services/imports/available_units.py", "message": "available_units_reconcile_completed", "data": {"property_id": 1, "processed": 54, "created_turnovers": 54, "updated_rows_only": 0}, "runId": "post-fix", "hypothesisId": "H1"}

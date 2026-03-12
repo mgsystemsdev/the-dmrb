@@ -11,6 +11,7 @@ from db import repository
 from services.imports.common import (
     _append_diagnostic,
     _audit,
+    _ensure_unit,
     _filter_phase,
     _normalize_unit,
     _row_to_dict,
@@ -58,24 +59,9 @@ def apply_pending_move_ins(
     for row_index, row in enumerate(rows, start=1):
         unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=row["unit_norm"])
         if unit_row is None:
-            _append_diagnostic(
-                diagnostics,
-                row_index=row_index,
-                column="Unit",
-                error_type="UNKNOWN_UNIT_REFERENCE",
-                error_message="Unit was not found for pending move-in row.",
-                suggestion="Ensure the unit exists and has an open turnover before importing.",
-            )
-            _write_import_row(
-                conn, batch_id, row,
-                validation_status="CONFLICT",
-                conflict_flag=1,
-                conflict_reason="MOVE_IN_WITHOUT_OPEN_TURNOVER",
-                move_out_date=None,
-                move_in_date=_to_iso_date(row.get("move_in_date")),
-            )
-            conflict_count += 1
-            continue
+            # Ensure the unit exists so future workflows have a unit record,
+            # but still treat absence of an open turnover as a conflict below.
+            unit_row = _ensure_unit(conn, property_id, row["unit_raw"], row["unit_norm"])
         unit_id = unit_row["unit_id"]
         open_turnover = _row_to_dict(repository.get_open_turnover_by_unit(conn, unit_id))
         if open_turnover is None:
