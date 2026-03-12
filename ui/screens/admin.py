@@ -554,7 +554,7 @@ def _run_import_for_report(
             ),
         )
         conn.commit()
-        invalidate_ui_caches()
+        invalidate_board_caches()
         status = result.get("status", "SUCCESS")
         batch_id = result.get("batch_id", "")
         record_count = result.get("record_count", 0)

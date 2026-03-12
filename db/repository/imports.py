@@ -141,6 +141,24 @@ def get_import_rows_pending_fas(conn: sqlite3.Connection) -> list[dict]:
     return _rows_to_dicts(cursor.fetchall())
 
 
+def get_latest_import_batch_timestamp(conn: Any) -> str:
+    """
+    Return the most recent imported_at (ISO string) from any import_batch row.
+    Used to invalidate board cache when any new import is committed (include in cache key).
+    """
+    cursor = conn.execute(
+        "SELECT MAX(imported_at) AS imported_at FROM import_batch"
+    )
+    row = cursor.fetchone()
+    if not row:
+        return ""
+    if isinstance(row, dict):
+        val = row.get("imported_at")
+    else:
+        val = row[0]
+    return str(val or "").strip()
+
+
 def get_last_import_timestamps(conn: Any) -> dict[str, str]:
     """
     Return the most recent imported_at (ISO timestamp) per report_type for

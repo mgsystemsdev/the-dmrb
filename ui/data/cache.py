@@ -37,6 +37,14 @@ def invalidate_ui_caches() -> None:
     st.cache_data.clear()
 
 
+def invalidate_board_caches() -> None:
+    """Clear only board-related caches so the board and related views reload with fresh turnover data."""
+    cached_get_dmrb_board_rows.clear()
+    cached_get_flag_bridge_rows.clear()
+    cached_get_risk_radar_rows.clear()
+    cached_get_turnover_detail.clear()
+
+
 @st.cache_data(ttl=10, show_spinner=False)
 def cached_list_properties(db_identity: str) -> list[dict]:
     if not property_service_mod:
@@ -187,6 +195,7 @@ def cached_get_dmrb_board_rows(
     filter_assignee: str | None,
     filter_qc: str | None,
     today_iso: str,
+    latest_import_batch_timestamp: str = "",
 ) -> list[dict]:
     if not board_query_service:
         return []

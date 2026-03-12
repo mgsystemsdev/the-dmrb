@@ -59,6 +59,14 @@ def _get_dmrb_rows():
             )
             if phase_id is not None:
                 phase_ids = (phase_id,)
+        latest_import_ts = ""
+        if db_repository:
+            conn = get_conn()
+            if conn:
+                try:
+                    latest_import_ts = db_repository.get_latest_import_batch_timestamp(conn) or ""
+                finally:
+                    conn.close()
         return cached_get_dmrb_board_rows(
             db_identity,
             active_property["property_id"] if active_property else None,
@@ -78,6 +86,7 @@ def _get_dmrb_rows():
             if st.session_state.filter_qc != "All"
             else None,
             today_iso=date.today().isoformat(),
+            latest_import_batch_timestamp=latest_import_ts,
         )
     except Exception as e:
         st.error(str(e))
