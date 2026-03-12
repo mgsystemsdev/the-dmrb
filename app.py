@@ -8,6 +8,7 @@ import os
 
 import streamlit as st
 
+from config.settings import get_settings
 from ui.components.sidebar import render_navigation
 from ui.data.backend import (
     BACKEND_AVAILABLE,
@@ -90,6 +91,26 @@ if BACKEND_AVAILABLE and turnover_service_mod:
             conn.commit()
         conn.close()
     except Exception:
+        pass
+
+# Reconcile legacy AVAILABLE_UNITS imports so Vacant rows with Available Date
+# and no open turnover are converted into turnovers and marked as OK.
+if BACKEND_AVAILABLE:
+    try:
+        from services.imports.available_units import reconcile_available_units_vacancy_invariant
+
+        settings = get_settings()
+        conn = get_connection(get_db_path())
+        reconcile_available_units_vacancy_invariant(
+            conn,
+            property_id=settings.default_property_id,
+            today=settings.today(),
+            actor=settings.default_actor,
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        # Any failure here should not block the UI from loading.
         pass
 
 render_navigation(st.session_state.page)

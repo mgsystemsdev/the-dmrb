@@ -44,6 +44,159 @@ def _status_allows_turnover_creation(status: str | None) -> bool:
     return normalized in STATUSES_ALLOWING_TURNOVER_CREATION
 
 
+# #region agent log
+import json as _au_json
+import time as _au_time
+
+_DEBUG_LOG_PATH = "/Users/miguelgonzalez/Projects/GitHub/Private/GitHub_Linked/the-dmrb/.cursor/debug-47f25f.log"
+
+
+def _log_available_units_reconcile(message: str, data: dict, *, run_id: str, hypothesis_id: str) -> None:
+    """Append a single NDJSON debug log line for AVAILABLE_UNITS reconciliation."""
+    try:
+        payload = {
+            "sessionId": "47f25f",
+            "id": f"log_{int(_au_time.time() * 1000)}",
+            "timestamp": int(_au_time.time() * 1000),
+            "location": "services/imports/available_units.py",
+            "message": message,
+            "data": data,
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(_au_json.dumps(payload) + "\n")
+    except Exception:
+        # Logging must never break imports.
+        pass
+
+
+# #endregion
+
+
+def reconcile_available_units_vacancy_invariant(conn, *, property_id: int, today: date, actor: str) -> None:
+    """
+    One-off reconciliation for legacy AVAILABLE_UNITS batches:
+
+    For the latest AVAILABLE_UNITS batch, find rows that were previously
+    IGNORED/NO_OPEN_TURNOVER_FOR_READY_DATE but whose raw Status/Available Date
+    indicate a Vacant unit with a known Available Date. For each such row:
+
+    - Ensure the unit exists.
+    - Ensure an open turnover exists (creating one if needed) with
+      move_out_date = Available Date.
+    - Update the import_row to validation_status=OK and
+      conflict_reason=CREATED_TURNOVER_FROM_AVAILABILITY, setting move_out_date.
+    """
+    rows = repository.get_latest_import_rows(conn, "AVAILABLE_UNITS")
+    if not rows:
+        _log_available_units_reconcile(
+            "available_units_reconcile_no_rows",
+            {"property_id": property_id},
+            run_id="post-fix",
+            hypothesis_id="H1",
+        )
+        return
+
+    processed = 0
+    created_turnovers = 0
+    updated_rows_only = 0
+
+    # Reuse today's value for SLA/lifecycle hooks.
+    for row in rows:
+        if row.get("validation_status") != "IGNORED":
+            continue
+        if row.get("conflict_reason") != "NO_OPEN_TURNOVER_FOR_READY_DATE":
+            continue
+
+        try:
+            raw = _au_json.loads(row["raw_json"])
+        except Exception:
+            continue
+
+        raw_status = raw.get("Status")
+        status_norm = None
+        if isinstance(raw_status, str):
+            status_norm = raw_status.strip().lower() or None
+        if status_norm not in VACANT_STATUSES:
+            continue
+
+        raw_available = raw.get("Available Date")
+        if not raw_available:
+            continue
+
+        dt_avail = pd.to_datetime(raw_available, errors="coerce")
+        if pd.isna(dt_avail) or not hasattr(dt_avail, "date"):
+            continue
+        available_date = dt_avail.date()
+
+        unit_norm = row["unit_code_norm"]
+        unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=unit_norm)
+        if unit_row is None:
+            unit_row = _ensure_unit(conn, property_id, row["unit_code_raw"], unit_norm)
+
+        unit_id = unit_row["unit_id"]
+        open_turnover = repository.get_open_turnover_by_unit(conn, unit_id)
+
+        move_out_iso = available_date.isoformat()
+
+        if open_turnover is None:
+            # Create turnover anchored on Available Date.
+            source_turnover_key = f"{property_id}:{unit_norm}:{move_out_iso}"
+            tid = turnover_service.create_turnover_and_reconcile(
+                conn=conn,
+                unit_id=unit_id,
+                unit_row=unit_row,
+                property_id=property_id,
+                source_turnover_key=source_turnover_key,
+                move_out_date=available_date,
+                move_in_date=None,
+                report_ready_date=None,
+                today=today,
+                actor=actor,
+            )
+            created_turnovers += 1
+        else:
+            tid = open_turnover["turnover_id"]
+            updated_rows_only += 1
+
+        # Update import_row to reflect successful application.
+        conn.execute(
+            """
+            UPDATE import_row
+            SET validation_status = ?, conflict_flag = 0,
+                conflict_reason = 'CREATED_TURNOVER_FROM_AVAILABILITY',
+                move_out_date = ?, move_in_date = NULL
+            WHERE row_id = ?
+            """,
+            ("OK", move_out_iso, row["row_id"]),
+        )
+
+        # Also ensure turnover fields reflect availability info.
+        repository.update_turnover_fields(
+            conn,
+            tid,
+            {
+                "available_date": move_out_iso,
+                "availability_status": raw_status.strip() if isinstance(raw_status, str) else None,
+            },
+        )
+
+        processed += 1
+
+    _log_available_units_reconcile(
+        "available_units_reconcile_completed",
+        {
+            "property_id": property_id,
+            "processed": processed,
+            "created_turnovers": created_turnovers,
+            "updated_rows_only": updated_rows_only,
+        },
+        run_id="post-fix",
+        hypothesis_id="H1",
+    )
+
+
 def _parse_available_units(file_path: str) -> list[dict]:
     df = pd.read_csv(file_path, skiprows=5)
     df = df[["Unit", "Status", "Available Date", "Move-In Ready Date"]].copy()
