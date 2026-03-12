@@ -486,10 +486,11 @@ def _import_table_heading(report_type: str) -> str:
 
 
 def _render_latest_import_table(conn, report_type: str) -> None:
-    """Load latest batch rows for report_type and show table (persistent, updated with every import)."""
+    """Show table of latest successful import batch for report_type (persistent snapshot from DB; updates only on next import)."""
     if not import_service_mod:
         return
     st.markdown(f"### {_import_table_heading(report_type)}")
+    st.caption("Table is persistent; it updates with each new import.")
     try:
         rows = import_service_mod.get_latest_import_rows(conn, report_type)
     except Exception:
