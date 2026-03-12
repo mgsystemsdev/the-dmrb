@@ -49,19 +49,24 @@ def import_report_file(
     source_file_name = os.path.basename(file_path)
     checksum = _sha256_file(report_type, file_path)
 
-    existing = repository.get_import_batch_by_checksum(conn, checksum)
-    if existing is not None:
-        return {
-            "report_type": report_type,
-            "checksum": checksum,
-            "status": "NO_OP",
-            "batch_id": existing["batch_id"],
-            "record_count": 0,
-            "applied_count": 0,
-            "conflict_count": 0,
-            "invalid_count": 0,
-            "diagnostics": [],
-        }
+    # Checksum-based NO_OP short-circuit is preserved for most report types,
+    # but AVAILABLE_UNITS must always create a new batch so that importer
+    # rule changes (e.g. vacancy invariants) can be re-applied even when
+    # the underlying file is identical.
+    if report_type != AVAILABLE_UNITS:
+        existing = repository.get_import_batch_by_checksum(conn, checksum)
+        if existing is not None:
+            return {
+                "report_type": report_type,
+                "checksum": checksum,
+                "status": "NO_OP",
+                "batch_id": existing["batch_id"],
+                "record_count": 0,
+                "applied_count": 0,
+                "conflict_count": 0,
+                "invalid_count": 0,
+                "diagnostics": [],
+            }
 
     try:
         validate_import_file(report_type, file_path)
