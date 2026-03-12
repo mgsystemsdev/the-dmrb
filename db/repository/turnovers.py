@@ -74,7 +74,8 @@ def upsert_turnover_enrichment_cache(conn, *, turnover_id: int, as_of_date: str,
 def list_open_turnovers_by_property(conn: sqlite3.Connection, *, property_id: int):
     cursor = conn.execute(
         """SELECT * FROM turnover
-           WHERE property_id = ? AND closed_at IS NULL AND canceled_at IS NULL""",
+           WHERE property_id = ? AND closed_at IS NULL AND canceled_at IS NULL
+             AND move_out_date IS NOT NULL""",
         (property_id,),
     )
     return _rows_to_dicts(cursor.fetchall())
@@ -99,14 +100,16 @@ def list_open_turnovers(
             f"""SELECT t.* FROM turnover t
                 JOIN unit u ON t.unit_id = u.unit_id
                 WHERE u.phase_id IN ({placeholders})
-                  AND t.closed_at IS NULL AND t.canceled_at IS NULL""",
+                  AND t.closed_at IS NULL AND t.canceled_at IS NULL
+                  AND t.move_out_date IS NOT NULL""",
             phase_ids,
         )
         return _rows_to_dicts(cursor.fetchall())
     if property_ids is None:
         cursor = conn.execute(
             """SELECT * FROM turnover
-               WHERE closed_at IS NULL AND canceled_at IS NULL""",
+               WHERE closed_at IS NULL AND canceled_at IS NULL
+                 AND move_out_date IS NOT NULL""",
         )
         return _rows_to_dicts(cursor.fetchall())
     if not property_ids:
@@ -114,7 +117,8 @@ def list_open_turnovers(
     placeholders = ",".join("?" * len(property_ids))
     cursor = conn.execute(
         f"""SELECT * FROM turnover
-            WHERE property_id IN ({placeholders}) AND closed_at IS NULL AND canceled_at IS NULL""",
+            WHERE property_id IN ({placeholders}) AND closed_at IS NULL AND canceled_at IS NULL
+              AND move_out_date IS NOT NULL""",
         property_ids,
     )
     return _rows_to_dicts(cursor.fetchall())

@@ -30,6 +30,9 @@ def _instantiate_tasks_for_turnover_impl(conn, turnover_id: int, unit_row, prope
     task templates work on post-008 DBs (task_template has phase_id only). If the phase (or
     property) has no templates, ensure default templates so the turnover gets tasks as soon as
     it has a move-out date."""
+    turnover = repository.get_turnover_by_id(conn, turnover_id)
+    if not turnover or not turnover.get("move_out_date"):
+        return
     phase_id = unit_row.get("phase_id")
     if phase_id is None:
         phase_row = repository.get_first_phase_for_property(conn, property_id)

@@ -2,8 +2,27 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from db.repository._helpers import _inserted_id, _row_to_dict, _rows_to_dicts
+
+
+def _sqlite_version_ge_325(conn: Any) -> bool:
+    """Return True if connection is SQLite and version >= 3.25 (window functions)."""
+    if getattr(conn, "engine", None) == "postgres":
+        return False
+    try:
+        cur = conn.execute("SELECT sqlite_version()")
+        row = cur.fetchone()
+        version_str = row[0] if row else "0.0"
+        if hasattr(version_str, "strip"):
+            version_str = version_str.strip()
+        parts = str(version_str).split(".")[:2]
+        major = int(parts[0]) if parts else 0
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        return (major, minor) >= (3, 25)
+    except Exception:
+        return False
 
 
 def insert_import_batch(conn: sqlite3.Connection, data: dict) -> int:
@@ -89,24 +108,44 @@ def get_import_rows_pending_fas(conn: sqlite3.Connection) -> list[dict]:
     return _rows_to_dicts(cursor.fetchall())
 
 
-def get_import_diagnostics(conn: sqlite3.Connection, since_imported_at: str | None = None) -> list[dict]:
+def get_last_import_timestamps(conn: Any) -> dict[str, str]:
+    """
+    Return the most recent imported_at (ISO timestamp) per report_type for
+    MOVE_OUTS, PENDING_MOVE_INS, AVAILABLE_UNITS, PENDING_FAS.
+    Keys are report_type; value is imported_at or missing if never imported.
+    """
+    cursor = conn.execute(
+        """SELECT report_type, MAX(imported_at) AS imported_at
+           FROM import_batch
+           WHERE report_type IN ('MOVE_OUTS', 'PENDING_MOVE_INS', 'AVAILABLE_UNITS', 'PENDING_FAS')
+           GROUP BY report_type"""
+    )
+    return {row[0]: row[1] for row in cursor.fetchall() if row[1]}
+
+
+def get_import_diagnostics(conn: Any, since_imported_at: str | None = None) -> list[dict]:
     """
     Return non-OK import_row rows joined to import_batch, deduplicated to most recent
     per (unit_code_norm, report_type). For Import Diagnostics tab.
+    Columns: unit_code_norm, report_type, validation_status, conflict_reason, imported_at, source_file_name.
+    PostgreSQL and SQLite >= 3.25: window query; SQLite < 3.25: GROUP BY fallback.
     since_imported_at: optional ISO timestamp; only rows with b.imported_at >= this are returned.
     """
-    base_sql = """WITH diag AS (
+    date_filter = "AND (b.imported_at >= ? OR ? IS NULL)"
+    params: tuple = (since_imported_at, since_imported_at)
+
+    use_window = (
+        getattr(conn, "engine", None) == "postgres"
+        or _sqlite_version_ge_325(conn)
+    )
+
+    if use_window:
+        sql = f"""WITH diag AS (
             SELECT
-                r.row_id,
-                r.batch_id,
-                r.unit_code_raw,
                 r.unit_code_norm,
-                r.move_out_date,
-                r.move_in_date,
-                r.validation_status,
-                r.conflict_flag,
-                r.conflict_reason,
                 b.report_type,
+                r.validation_status,
+                r.conflict_reason,
                 b.imported_at,
                 b.source_file_name,
                 ROW_NUMBER() OVER (
@@ -119,28 +158,67 @@ def get_import_diagnostics(conn: sqlite3.Connection, since_imported_at: str | No
               {date_filter}
         )
         SELECT
-            row_id,
-            batch_id,
-            unit_code_raw,
             unit_code_norm,
-            move_out_date,
-            move_in_date,
-            validation_status,
-            conflict_flag,
-            conflict_reason,
             report_type,
+            validation_status,
+            conflict_reason,
             imported_at,
             source_file_name
         FROM diag
         WHERE rn = 1
-        ORDER BY imported_at DESC, row_id"""
-    if since_imported_at is not None:
-        sql = base_sql.format(date_filter="AND b.imported_at >= ?")
-        params: tuple = (since_imported_at,)
+        ORDER BY imported_at DESC"""
+        cursor = conn.execute(sql, params)
     else:
-        sql = base_sql.format(date_filter="")
-        params = ()
-    cursor = conn.execute(sql, params)
+        sql = f"""WITH base AS (
+            SELECT
+                r.row_id,
+                r.unit_code_norm,
+                r.validation_status,
+                r.conflict_reason,
+                b.report_type,
+                b.imported_at,
+                b.source_file_name
+            FROM import_row r
+            JOIN import_batch b ON r.batch_id = b.batch_id
+            WHERE r.validation_status != 'OK'
+              {date_filter}
+        ),
+        latest_imported AS (
+            SELECT
+                unit_code_norm,
+                report_type,
+                MAX(imported_at) AS max_imported_at
+            FROM base
+            GROUP BY unit_code_norm, report_type
+        ),
+        latest_row AS (
+            SELECT
+                b.unit_code_norm,
+                b.report_type,
+                b.max_imported_at,
+                MAX(base.row_id) AS max_row_id
+            FROM latest_imported b
+            JOIN base ON base.unit_code_norm = b.unit_code_norm
+                AND base.report_type = b.report_type
+                AND base.imported_at = b.max_imported_at
+            GROUP BY b.unit_code_norm, b.report_type, b.max_imported_at
+        )
+        SELECT
+            base.unit_code_norm,
+            base.report_type,
+            base.validation_status,
+            base.conflict_reason,
+            base.imported_at,
+            base.source_file_name
+        FROM base
+        JOIN latest_row l
+          ON base.unit_code_norm = l.unit_code_norm
+          AND base.report_type = l.report_type
+          AND base.imported_at = l.max_imported_at
+          AND base.row_id = l.max_row_id
+        ORDER BY base.imported_at DESC, base.row_id"""
+        cursor = conn.execute(sql, params)
+
     return _rows_to_dicts(cursor.fetchall())
 
 

@@ -5,6 +5,8 @@
 **Scope:** No code changes; specification only.  
 **Date:** 2025-03-11
 
+**See also:** `LIFECYCLE_DOCUMENTATION.md` for a consolidated explainer (rules, report behavior, exception workflows, clarifications, manager workflow, lifecycle diagram, execution order).
+
 ---
 
 ## 1. Entry States

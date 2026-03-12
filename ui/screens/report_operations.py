@@ -91,8 +91,10 @@ def _render_missing_move_out_tab(active_property: dict) -> None:
 
     st.subheader("Missing Move-Out Queue")
     st.caption(
-        "Units from reports with MOVE_IN_WITHOUT_OPEN_TURNOVER or MOVE_OUT_DATE_MISSING. "
-        "Enter a move-out date to create a turnover (unit will appear on the board)."
+        "Move-in rows without move-out are repaired here. "
+        "Enter a move-out date to create the turnover. "
+        "Units will appear on the board only after turnover creation. "
+        "This makes the workflow obvious for managers."
     )
     rows = _get_missing_move_out_queue()
     if not rows:

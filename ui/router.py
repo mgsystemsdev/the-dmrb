@@ -6,6 +6,7 @@ import importlib
 import streamlit as st
 
 _PAGE_TO_MODULE = {
+    "morning_workflow": "morning_workflow",
     "dmrb_board": "board",
     "flag_bridge": "flag_bridge",
     "risk_radar": "risk_radar",

@@ -7,8 +7,9 @@ def render_navigation(current_page: str) -> str:
     st.sidebar.title("The DMRB")
     st.sidebar.caption("Apartment Turn Tracker")
 
-    nav_labels = ["DMRB Board", "Flag Bridge", "Risk Radar", "Report Operations", "Turnover Detail", "DMRB AI Agent", "Admin"]
+    nav_labels = ["Morning Workflow", "DMRB Board", "Flag Bridge", "Risk Radar", "Report Operations", "Turnover Detail", "DMRB AI Agent", "Admin"]
     nav_to_page = {
+        "Morning Workflow": "morning_workflow",
         "DMRB Board": "dmrb_board",
         "Flag Bridge": "flag_bridge",
         "Risk Radar": "risk_radar",
