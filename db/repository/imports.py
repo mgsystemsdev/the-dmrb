@@ -138,7 +138,15 @@ def get_last_import_timestamps(conn: Any) -> dict[str, str]:
            WHERE report_type IN ('MOVE_OUTS', 'PENDING_MOVE_INS', 'AVAILABLE_UNITS', 'PENDING_FAS')
            GROUP BY report_type"""
     )
-    return {row[0]: row[1] for row in cursor.fetchall() if row[1]}
+    result: dict[str, str] = {}
+    for row in cursor.fetchall():
+        if isinstance(row, dict):
+            report_type, imported_at = row.get("report_type"), row.get("imported_at")
+        else:
+            report_type, imported_at = row[0], row[1]
+        if report_type is not None and imported_at:
+            result[report_type] = imported_at
+    return result
 
 
 def get_import_diagnostics(conn: Any, since_imported_at: str | None = None) -> list[dict]:
