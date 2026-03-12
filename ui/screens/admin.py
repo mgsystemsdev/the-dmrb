@@ -21,6 +21,9 @@ from ui.data.backend import (
     property_service_mod,
     unit_master_import_service_mod,
 )
+from services.imports.available_units import (
+    reconcile_available_units_readiness_from_latest,
+)
 from ui.data.cache import (
     cached_list_buildings,
     cached_list_properties,
@@ -658,6 +661,36 @@ def _render_import() -> None:
             )
         if conn:
             _render_latest_import_table(conn, "AVAILABLE_UNITS")
+            st.markdown("---")
+            st.caption(
+                "Use the button below to reapply the latest Available Units report's "
+                "Move-In Ready Date and Status onto existing turnovers for this property "
+                "without re-running the import."
+            )
+            if st.button(
+                "Apply latest Available Units readiness to turnovers",
+                key="import_reapply_available_units_readiness",
+            ):
+                if not st.session_state.get("enable_db_writes"):
+                    st.error("Enable DB Writes in the sidebar to update turnovers.")
+                else:
+                    active_pid = active_property["property_id"]
+
+                    def do_reconcile(conn_inner):
+                        reconcile_available_units_readiness_from_latest(
+                            conn=conn_inner,
+                            property_id=active_pid,
+                            today=date.today(),
+                            actor=APP_SETTINGS.default_actor,
+                            corr_id="available-units-readiness-backfill",
+                        )
+
+                    if db_write(do_reconcile):
+                        invalidate_ui_caches()
+                        st.success(
+                            "Ready Day and Status were reapplied from the latest "
+                            "Available Units report. Refresh the DMRB board to see changes."
+                        )
 
     with tab_move_outs:
         uploaded_mo = st.file_uploader(
