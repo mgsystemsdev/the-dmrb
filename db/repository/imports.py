@@ -80,6 +80,21 @@ def get_import_rows_by_batch(conn: sqlite3.Connection, batch_id: int) -> list[di
     return _rows_to_dicts(cursor.fetchall())
 
 
+def get_latest_import_batch(conn: Any, report_type: str) -> dict | None:
+    """Return the most recent import_batch row for the given report_type, or None if none exists."""
+    cursor = conn.execute(
+        """SELECT * FROM import_batch
+           WHERE report_type = ?
+           ORDER BY imported_at DESC, batch_id DESC
+           LIMIT 1""",
+        (report_type,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return _row_to_dict(row)
+
+
 def get_latest_import_rows(conn: sqlite3.Connection, report_type: str) -> list[dict]:
     """Return import_row rows for the most recent batch of the given report_type.
     Latest batch is chosen by imported_at DESC, batch_id DESC for determinism.

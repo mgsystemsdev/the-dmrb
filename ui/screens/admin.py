@@ -486,22 +486,35 @@ def _import_table_heading(report_type: str) -> str:
 
 
 def _render_latest_import_table(conn, report_type: str) -> None:
-    """Show table of latest successful import batch for report_type (persistent snapshot from DB; updates only on next import)."""
+    """Show batch metadata and table of latest import for report_type (persistent snapshot from DB; updates only on next import)."""
     if not import_service_mod:
         return
     st.markdown(f"### {_import_table_heading(report_type)}")
     st.caption("Table is persistent; it updates with each new import.")
     try:
+        batch = import_service_mod.get_latest_import_batch(conn, report_type)
+    except Exception:
+        batch = None
+    if batch is None:
+        st.info("No import has been run for this report yet.")
+        return
+    st.caption(
+        f"Imported: {batch.get('imported_at', '—')} | "
+        f"Source file: {batch.get('source_file_name', '—')} | "
+        f"Rows: {batch.get('record_count', '—')} | "
+        f"Status: {batch.get('status', '—')}"
+    )
+    try:
         rows = import_service_mod.get_latest_import_rows(conn, report_type)
     except Exception:
         rows = []
+    if not rows:
+        st.info("Latest import completed but produced no rows.")
+        return
     values = _import_rows_to_display_values(rows, report_type)
-    if values:
-        st.dataframe(
-            pd.DataFrame(values), use_container_width=True, hide_index=True
-        )
-    else:
-        st.info("No import data yet. Run an import above to populate this table.")
+    st.dataframe(
+        pd.DataFrame(values), use_container_width=True, hide_index=True
+    )
 
 
 def _run_import_for_report(

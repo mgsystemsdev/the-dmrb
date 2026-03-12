@@ -18,6 +18,11 @@ def get_import_rows_by_batch(conn, batch_id: int):
     return repository.get_import_rows_by_batch(conn, batch_id)
 
 
+def get_latest_import_batch(conn, report_type: str):
+    """Return the most recent import_batch for the given report_type, or None."""
+    return repository.get_latest_import_batch(conn, report_type)
+
+
 def get_latest_import_rows(conn, report_type: str):
     """Return rows from the most recent batch for the given report_type (deterministic)."""
     return repository.get_latest_import_rows(conn, report_type)
@@ -48,6 +53,7 @@ __all__ = [
     "DMRB",
     "get_import_rows_by_batch",
     "get_latest_available_units_rows",
+    "get_latest_import_batch",
     "get_latest_dmrb_rows",
     "get_latest_import_rows",
     "get_latest_move_out_rows",
