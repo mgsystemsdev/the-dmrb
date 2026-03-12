@@ -23,15 +23,17 @@ from services.imports.common import (
 )
 from services.imports.validation import _normalize_date_str, _normalize_status
 
-# Status values that allow creating a turnover when no open turnover exists (Available Date used as move_out_date).
-STATUSES_ALLOWING_TURNOVER_CREATION = frozenset((
-    "vacant ready",
-    "vacant not ready",
-    "beacon ready",
-    "beacon not ready",
-    "on notice",
-    "on notice (break)",
-))
+# Canonical status sets for AVAILABLE_UNITS vacancy semantics.
+VACANT_STATUSES = frozenset({"vacant ready", "vacant not ready"})
+NOTICE_STATUSES = frozenset({"on notice", "on notice (break)"})
+
+# Status values that allow creating a turnover when no open turnover exists
+# (Available Date used as move_out_date). Only VACANT_STATUSES are required
+# to create turnovers; Beacon statuses are allowed but not required by the
+# invariant, and Notice statuses do not auto-create turnovers.
+STATUSES_ALLOWING_TURNOVER_CREATION = frozenset(
+    set(VACANT_STATUSES) | {"beacon ready", "beacon not ready"}
+)
 
 
 def _status_allows_turnover_creation(status: str | None) -> bool:
@@ -92,6 +94,7 @@ def apply_available_units(
         normalized_status = None
         if isinstance(raw_status, str):
             normalized_status = raw_status.strip().lower() or None
+        available_date = row.get("available_date")
         ready_iso = _to_iso_date(row.get("report_ready_date"))
         unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=row["unit_norm"])
         if unit_row is None:
@@ -120,7 +123,6 @@ def apply_available_units(
         if open_turnover is None:
             # No open turnover: create one when status indicates vacancy (vacancy truth); else ignore.
             if _status_allows_turnover_creation(normalized_status):
-                available_date = row.get("available_date")
                 if available_date is None:
                     _append_diagnostic(
                         diagnostics,
@@ -178,23 +180,54 @@ def apply_available_units(
                 )
                 applied_count += 1
             else:
-                _append_diagnostic(
-                    diagnostics,
-                    row_index=row_index,
-                    column="Unit",
-                    error_type="UNKNOWN_UNIT_REFERENCE",
-                    error_message="No open turnover found for ready-date import row.",
-                    suggestion="Verify unit identity and open turnover state, then retry import.",
-                )
-                _write_import_row(
-                    conn,
-                    batch_id,
-                    row,
-                    validation_status="IGNORED",
-                    conflict_reason="NO_OPEN_TURNOVER_FOR_READY_DATE",
-                    move_out_date=None,
-                    move_in_date=None,
-                )
+                # Invariant safeguard: a Vacant row with an Available Date and no
+                # open turnover must never be silently ignored. If we ever reach
+                # this branch for such a row, surface an explicit INVALID
+                # diagnostic so it appears in Import Diagnostics.
+                if normalized_status in VACANT_STATUSES and available_date is not None:
+                    _append_diagnostic(
+                        diagnostics,
+                        row_index=row_index,
+                        column="Status",
+                        error_type="VACANT_ROW_WITHOUT_TURNOVER",
+                        error_message=(
+                            "Vacant row reached IGNORED branch without creating a turnover. "
+                            f"unit_code_norm={row.get('unit_norm')}, "
+                            f"status={raw_status}, "
+                            f"available_date={_to_iso_date(available_date)}, "
+                            f"batch_id={batch_id}"
+                        ),
+                        suggestion="Investigate invariant breach: VACANT row with Available Date must create a turnover.",
+                    )
+                    _write_import_row(
+                        conn,
+                        batch_id,
+                        row,
+                        validation_status="INVALID",
+                        conflict_flag=1,
+                        conflict_reason="VACANT_ROW_WITHOUT_TURNOVER",
+                        move_out_date=None,
+                        move_in_date=None,
+                    )
+                    invalid_count += 1
+                else:
+                    _append_diagnostic(
+                        diagnostics,
+                        row_index=row_index,
+                        column="Unit",
+                        error_type="UNKNOWN_UNIT_REFERENCE",
+                        error_message="No open turnover found for ready-date import row.",
+                        suggestion="Verify unit identity and open turnover state, then retry import.",
+                    )
+                    _write_import_row(
+                        conn,
+                        batch_id,
+                        row,
+                        validation_status="IGNORED",
+                        conflict_reason="NO_OPEN_TURNOVER_FOR_READY_DATE",
+                        move_out_date=None,
+                        move_in_date=None,
+                    )
             continue
         # Open turnover exists: update report_ready_date, available_date, availability_status (respect overrides).
         if row.get("report_ready_date") is None:
