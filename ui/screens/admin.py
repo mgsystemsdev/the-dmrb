@@ -31,6 +31,7 @@ from ui.data.cache import (
     cached_list_units,
     db_available,
     db_cache_identity,
+    invalidate_board_caches,
     invalidate_ui_caches,
     render_active_property_banner,
     set_active_property,
