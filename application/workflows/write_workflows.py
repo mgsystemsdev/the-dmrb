@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from application.commands.write_commands import (
     ApplyImportRow,
     ClearManualOverride,
@@ -10,7 +8,6 @@ from application.commands.write_commands import (
     UpdateTurnoverDates,
     UpdateTurnoverStatus,
 )
-from db import repository
 from services import import_service, manual_availability_service, task_service, turnover_service
 
 
@@ -78,24 +75,9 @@ def apply_import_row_workflow(conn, command: ApplyImportRow):
 
 
 def clear_manual_override_workflow(conn, command: ClearManualOverride) -> None:
-    now = datetime.now(timezone.utc).isoformat()
-    repository.update_turnover_fields(
+    turnover_service.clear_manual_override(
         conn,
         command.turnover_id,
-        {command.override_field: None, "updated_at": now},
-        strict=False,
-    )
-    repository.insert_audit_log(
-        conn,
-        {
-            "entity_type": "turnover",
-            "entity_id": command.turnover_id,
-            "field_name": "manual_override_cleared",
-            "old_value": command.override_field,
-            "new_value": None,
-            "changed_at": now,
-            "actor": command.actor,
-            "source": "manual",
-            "correlation_id": None,
-        },
+        command.override_field,
+        command.actor,
     )

@@ -14,9 +14,11 @@ export_service_mod = None
 import_service_mod = None
 manual_availability_service_mod = None
 note_service_mod = None
+property_service_mod = None
 task_service_mod = None
 turnover_service_mod = None
 unit_master_import_service_mod = None
+unit_service_mod = None
 get_connection = None
 ensure_database_ready = None
 
@@ -28,9 +30,11 @@ try:
     from services import import_service as import_service_mod
     from services import manual_availability_service as manual_availability_service_mod
     from services import note_service as note_service_mod
+    from services import property_service as property_service_mod
     from services import task_service as task_service_mod
     from services import turnover_service as turnover_service_mod
     from services import unit_master_import_service as unit_master_import_service_mod
+    from services import unit_service as unit_service_mod
     get_connection = _get_connection
     ensure_database_ready = _ensure_database_ready
     BACKEND_AVAILABLE = True
@@ -42,9 +46,11 @@ except Exception as e:
     import_service_mod = None
     manual_availability_service_mod = None
     note_service_mod = None
+    property_service_mod = None
     task_service_mod = None
     turnover_service_mod = None
     unit_master_import_service_mod = None
+    unit_service_mod = None
 
 
 def get_conn():

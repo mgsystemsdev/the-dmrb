@@ -13,11 +13,11 @@ from application.workflows import apply_import_row_workflow, create_turnover_wor
 from config.settings import get_settings
 from ui.data.backend import (
     BACKEND_ERROR,
-    db_repository,
     get_conn,
     get_db_path,
     import_service_mod,
     manual_availability_service_mod,
+    property_service_mod,
     unit_master_import_service_mod,
 )
 from ui.data.cache import (
@@ -165,7 +165,7 @@ def _render_property_structure() -> None:
     )
     if render_active_property_banner() is None:
         return
-    if not db_repository:
+    if not property_service_mod:
         st.info("Backend not available.")
         return
     if not db_available():
@@ -181,7 +181,7 @@ def _render_property_structure() -> None:
             )
             if st.button("Create property", key="ps_create_property"):
                 def do_create(conn):
-                    db_repository.insert_property(conn, name or "My Property")
+                    property_service_mod.insert_property(conn, name or "My Property")
 
                 if db_write(do_create):
                     st.success("Property created.")
@@ -210,7 +210,7 @@ def _render_property_structure() -> None:
                         and (new_phase_code or "").strip()
                     ):
                         def do_add_phase(conn, prop_id=pid, code=new_phase_code.strip()):
-                            db_repository.resolve_phase(
+                            property_service_mod.resolve_phase(
                                 conn, property_id=prop_id, phase_code=code
                             )
 
@@ -256,7 +256,7 @@ def _render_add_availability() -> None:
         "If Phase + Building + Unit does not match a unit in the database, "
         "it cannot enter the lifecycle."
     )
-    if not manual_availability_service_mod or not db_repository:
+    if not manual_availability_service_mod or not property_service_mod:
         st.warning("Backend or manual availability service not available.")
         if BACKEND_ERROR is not None:
             with st.expander("Details"):
@@ -296,7 +296,7 @@ def _render_add_availability() -> None:
                     st.error("Enter a phase code.")
                 else:
                     def do_create_phase(conn):
-                        db_repository.resolve_phase(
+                        property_service_mod.resolve_phase(
                             conn, property_id=property_id, phase_code=code
                         )
 
@@ -369,7 +369,7 @@ def _render_add_availability() -> None:
                     st.error("Enter a building code.")
                 else:
                     def do_create_building(conn):
-                        db_repository.resolve_building(
+                        property_service_mod.resolve_building(
                             conn, phase_id=phase_id, building_code=bcode
                         )
 
@@ -497,7 +497,7 @@ def _run_import_for_report(
                 st.caption(f"... and {len(diagnostics) - 50} more diagnostics.")
 
         try:
-            rows = db_repository.get_import_rows_by_batch(conn, batch_id)
+            rows = import_service_mod.get_import_rows_by_batch(conn, batch_id)
         except Exception:
             rows = []
 
@@ -606,7 +606,7 @@ def _run_import_for_report(
 # ---------------------------------------------------------------------------
 def _render_import() -> None:
     st.subheader("Import console")
-    if not import_service_mod or not db_repository:
+    if not import_service_mod:
         st.warning("Backend or import service not available.")
         if BACKEND_ERROR is not None:
             with st.expander("Details"):
@@ -735,7 +735,7 @@ def render() -> None:
                 created = {"property_id": None}
 
                 def do_create(conn):
-                    created["property_id"] = db_repository.insert_property(
+                    created["property_id"] = property_service_mod.insert_property(
                         conn, (new_property_name or "").strip()
                     )
 

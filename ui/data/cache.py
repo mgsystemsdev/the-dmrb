@@ -11,10 +11,10 @@ import streamlit as st
 from config.settings import get_settings
 from ui.data.backend import (
     board_query_service,
-    db_repository,
-    db_write,
     get_conn,
     get_db_path,
+    property_service_mod,
+    unit_service_mod,
 )
 from ui.helpers.dates import iso_to_date
 
@@ -39,13 +39,13 @@ def invalidate_ui_caches() -> None:
 
 @st.cache_data(ttl=10, show_spinner=False)
 def cached_list_properties(db_identity: str) -> list[dict]:
-    if not db_repository:
+    if not property_service_mod:
         return []
     conn = get_conn()
     if not conn:
         return []
     try:
-        return [dict(row) for row in db_repository.list_properties(conn)]
+        return [dict(row) for row in property_service_mod.list_properties(conn)]
     finally:
         conn.close()
 
@@ -86,52 +86,52 @@ def render_active_property_banner() -> dict | None:
 
 @st.cache_data(ttl=10, show_spinner=False)
 def cached_list_phases(db_identity: str, property_id: int | None = None) -> list[dict]:
-    if not db_repository:
+    if not property_service_mod:
         return []
     conn = get_conn()
     if not conn:
         return []
     try:
-        return [dict(row) for row in db_repository.list_phases(conn, property_id=property_id)]
+        return [dict(row) for row in property_service_mod.list_phases(conn, property_id=property_id)]
     finally:
         conn.close()
 
 
 @st.cache_data(ttl=10, show_spinner=False)
 def cached_list_buildings(db_identity: str, phase_id: int) -> list[dict]:
-    if not db_repository:
+    if not property_service_mod:
         return []
     conn = get_conn()
     if not conn:
         return []
     try:
-        return [dict(row) for row in db_repository.list_buildings(conn, phase_id=phase_id)]
+        return [dict(row) for row in property_service_mod.list_buildings(conn, phase_id=phase_id)]
     finally:
         conn.close()
 
 
 @st.cache_data(ttl=10, show_spinner=False)
 def cached_list_units(db_identity: str, building_id: int) -> list[dict]:
-    if not db_repository:
+    if not unit_service_mod:
         return []
     conn = get_conn()
     if not conn:
         return []
     try:
-        return [dict(row) for row in db_repository.list_units(conn, building_id=building_id)]
+        return [dict(row) for row in unit_service_mod.list_units(conn, building_id=building_id)]
     finally:
         conn.close()
 
 
 @st.cache_data(ttl=10, show_spinner=False)
 def cached_list_unit_master_import_units(db_identity: str) -> list[dict]:
-    if not db_repository:
+    if not unit_service_mod:
         return []
     conn = get_conn()
     if not conn:
         return []
     try:
-        return db_repository.list_unit_master_import_units(conn)
+        return unit_service_mod.list_unit_master_import_units(conn)
     finally:
         conn.close()
 

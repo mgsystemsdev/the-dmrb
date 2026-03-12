@@ -453,3 +453,12 @@ def attempt_auto_close(
     now_iso = _now_iso()
     repository.update_turnover_fields(conn, turnover_id, {"closed_at": now_iso})
     _audit(conn, turnover_id, "closed_at", None, now_iso, actor, "system")
+
+
+def clear_manual_override(conn, turnover_id: int, override_field: str, actor: str) -> None:
+    """Clear a manual override on a turnover and write an audit log. Used by UI clear-override action."""
+    now = _now_iso()
+    repository.update_turnover_fields(
+        conn, turnover_id, {override_field: None, "updated_at": now}, strict=False
+    )
+    _audit(conn, turnover_id, "manual_override_cleared", override_field, None, actor, "manual")
