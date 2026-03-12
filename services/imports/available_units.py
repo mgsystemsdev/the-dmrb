@@ -22,16 +22,21 @@ from services.imports.common import (
 )
 from services.imports.validation import _normalize_date_str, _normalize_status
 
-# Status values that indicate vacancy; turnover may be created when no open turnover exists.
-VACANCY_STATUSES = frozenset(("vacant ready", "vacant not ready"))
+# Status values that allow creating a turnover when no open turnover exists (Available Date used as move_out_date).
+STATUSES_ALLOWING_TURNOVER_CREATION = frozenset((
+    "vacant ready",
+    "vacant not ready",
+    "on notice",
+    "on notice (break)",
+))
 
 
-def _is_vacancy_status(status: str | None) -> bool:
-    """True when status is one of: Vacant ready, Vacant not ready (case-insensitive)."""
+def _status_allows_turnover_creation(status: str | None) -> bool:
+    """True when status allows creating a turnover from this report (case-insensitive)."""
     if not status or not isinstance(status, str):
         return False
     normalized = status.strip().lower()
-    return normalized in VACANCY_STATUSES
+    return normalized in STATUSES_ALLOWING_TURNOVER_CREATION
 
 
 def _parse_available_units(file_path: str) -> list[dict]:
@@ -103,7 +108,7 @@ def apply_available_units(
         open_turnover = _row_to_dict(repository.get_open_turnover_by_unit(conn, unit_id))
         if open_turnover is None:
             # No open turnover: create one when status indicates vacancy (vacancy truth); else ignore.
-            if _is_vacancy_status(row.get("status")):
+            if _status_allows_turnover_creation(row.get("status")):
                 move_out_date = row.get("available_date") or row.get("report_ready_date") or today
                 move_out_iso = move_out_date.isoformat()
                 source_turnover_key = f"{property_id}:{row['unit_norm']}:{move_out_iso}"
