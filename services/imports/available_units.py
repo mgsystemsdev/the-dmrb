@@ -197,6 +197,109 @@ def reconcile_available_units_vacancy_invariant(conn, *, property_id: int, today
     )
 
 
+def reconcile_available_units_readiness_from_latest(
+    conn,
+    *,
+    property_id: int,
+    today: date,
+    actor: str,
+    corr_id: str,
+) -> None:
+    """
+    Backfill readiness data (report_ready_date, available_date, availability_status) on turnovers
+    from the latest AVAILABLE_UNITS batch.
+
+    This is safe to run after an import when turnovers exist but their readiness fields were not
+    fully populated by earlier logic. It reads raw_json from import_row so column mapping stays
+    aligned with the current report format.
+    """
+    rows = repository.get_latest_import_rows(conn, "AVAILABLE_UNITS")
+    if not rows:
+        _log_available_units_reconcile(
+            "available_units_readiness_no_rows",
+            {"property_id": property_id},
+            run_id="readiness-backfill",
+            hypothesis_id="H2",
+        )
+        return
+
+    processed = 0
+
+    for row in rows:
+        # Only consider rows that were successfully applied.
+        if row.get("validation_status") != "OK":
+            continue
+
+        try:
+            raw = _au_json.loads(row["raw_json"])
+        except Exception:
+            continue
+
+        unit_raw = raw.get("Unit") or row.get("unit_code_raw")
+        # Raw file uses "Unit 4-26-0417" style; strip leading label if present.
+        if isinstance(unit_raw, str) and unit_raw.lower().startswith("unit "):
+            unit_raw = unit_raw[5:]
+        unit_raw = str(unit_raw or "")
+        _, unit_norm = _normalize_unit(unit_raw)
+
+        raw_status = raw.get("Status")
+        status_val = str(raw_status).strip() if isinstance(raw_status, str) else None
+
+        raw_available = raw.get("Available Date")
+        raw_ready = raw.get("Move-In Ready Date")
+        dt_avail = pd.to_datetime(raw_available, errors="coerce") if raw_available else None
+        dt_ready = pd.to_datetime(raw_ready, errors="coerce") if raw_ready else None
+        available_date = dt_avail.date() if dt_avail is not None and pd.notna(dt_avail) and hasattr(dt_avail, "date") else None
+        ready_date = dt_ready.date() if dt_ready is not None and pd.notna(dt_ready) and hasattr(dt_ready, "date") else None
+
+        unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=unit_norm)
+        if unit_row is None:
+            unit_row = _ensure_unit(conn, property_id, unit_raw, unit_norm)
+
+        unit_id = unit_row["unit_id"]
+        open_turnover = repository.get_open_turnover_by_unit(conn, unit_id)
+        if open_turnover is None:
+            continue
+
+        tid = open_turnover["turnover_id"]
+        old_ready = open_turnover.get("report_ready_date")
+        old_available = open_turnover.get("available_date")
+        old_status = open_turnover.get("availability_status")
+
+        # Effective ready date: prefer explicit ready, else fall back to available.
+        effective_ready = ready_date or available_date
+        effective_ready_iso = effective_ready.isoformat() if effective_ready else None
+        available_iso = available_date.isoformat() if available_date else effective_ready_iso
+
+        update_fields: dict[str, Any] = {"updated_at": today.isoformat()}
+
+        if effective_ready_iso is not None and old_ready != effective_ready_iso:
+            update_fields["report_ready_date"] = effective_ready_iso
+            _audit(conn, tid, "report_ready_date", old_ready, effective_ready_iso, actor, corr_id)
+
+        if available_iso is not None and old_available != available_iso:
+            update_fields["available_date"] = available_iso
+            _audit(conn, tid, "available_date", old_available, available_iso, actor, corr_id)
+
+        if status_val is not None and old_status != status_val:
+            update_fields["availability_status"] = status_val
+            _audit(conn, tid, "availability_status", old_status, status_val, actor, corr_id)
+
+        if len(update_fields) > 1:  # more than just updated_at
+            repository.update_turnover_fields(conn, tid, update_fields)
+            processed += 1
+
+    _log_available_units_reconcile(
+        "available_units_readiness_completed",
+        {
+            "property_id": property_id,
+            "processed": processed,
+        },
+        run_id="readiness-backfill",
+        hypothesis_id="H2",
+    )
+
+
 def _parse_available_units(file_path: str) -> list[dict]:
     df = pd.read_csv(file_path, skiprows=5)
     df = df[["Unit", "Status", "Available Date", "Move-In Ready Date"]].copy()
