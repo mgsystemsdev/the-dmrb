@@ -141,6 +141,7 @@ def reconcile_missing_tasks(conn) -> int:
         """SELECT t.turnover_id, t.unit_id, t.property_id
            FROM turnover t
            WHERE t.closed_at IS NULL AND t.canceled_at IS NULL
+             AND t.move_out_date IS NOT NULL
              AND NOT EXISTS (SELECT 1 FROM task tk WHERE tk.turnover_id = t.turnover_id)"""
     ).fetchall()
     count = 0

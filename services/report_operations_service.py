@@ -107,6 +107,38 @@ def get_fas_tracker_rows(conn: Any, *, property_id: int) -> list[dict]:
     return out
 
 
+def get_import_diagnostics_queue(
+    conn: Any,
+    *,
+    property_id: int,
+    since_imported_at: str | None = None,
+) -> list[dict]:
+    """
+    Return diagnostic import rows (non-OK) for the active property for the Import Diagnostics tab.
+    Filters to rows whose unit_code_norm resolves to a unit in the given property.
+    """
+    rows = repository.get_import_diagnostics(conn, since_imported_at=since_imported_at)
+    out: list[dict] = []
+    for row in rows:
+        unit_code_norm = (row.get("unit_code_norm") or "").strip()
+        if not unit_code_norm:
+            continue
+        unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=unit_code_norm)
+        if unit_row is None:
+            continue
+        out.append({
+            "unit_code": row.get("unit_code_raw") or unit_code_norm,
+            "report_type": row.get("report_type"),
+            "validation_status": row.get("validation_status"),
+            "conflict_reason": row.get("conflict_reason"),
+            "imported_at": row.get("imported_at"),
+            "source_file_name": row.get("source_file_name"),
+            "move_out_date": row.get("move_out_date"),
+            "move_in_date": row.get("move_in_date"),
+        })
+    return out
+
+
 def upsert_fas_note(conn: Any, *, unit_id: int, fas_date: str, note_text: str) -> None:
     """Persist FAS tracker note for (unit_id, fas_date)."""
     repository.upsert_fas_tracker_note(conn, unit_id=unit_id, fas_date=fas_date, note_text=note_text or "")

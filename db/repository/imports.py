@@ -89,6 +89,58 @@ def get_import_rows_pending_fas(conn: sqlite3.Connection) -> list[dict]:
     return _rows_to_dicts(cursor.fetchall())
 
 
+def get_import_diagnostics(conn: sqlite3.Connection, since_imported_at: str | None = None) -> list[dict]:
+    """
+    Return non-OK import_row rows joined to import_batch, deduplicated to most recent
+    per (unit_code_norm, report_type). For Import Diagnostics tab.
+    since_imported_at: optional ISO timestamp; only rows with b.imported_at >= this are returned.
+    """
+    params = (since_imported_at, since_imported_at)
+    cursor = conn.execute(
+        """WITH diag AS (
+            SELECT
+                r.row_id,
+                r.batch_id,
+                r.unit_code_raw,
+                r.unit_code_norm,
+                r.move_out_date,
+                r.move_in_date,
+                r.validation_status,
+                r.conflict_flag,
+                r.conflict_reason,
+                b.report_type,
+                b.imported_at,
+                b.source_file_name,
+                ROW_NUMBER() OVER (
+                    PARTITION BY r.unit_code_norm, b.report_type
+                    ORDER BY b.imported_at DESC, r.row_id DESC
+                ) AS rn
+            FROM import_row r
+            JOIN import_batch b ON r.batch_id = b.batch_id
+            WHERE r.validation_status != 'OK'
+              AND (b.imported_at >= ? OR ? IS NULL)
+        )
+        SELECT
+            row_id,
+            batch_id,
+            unit_code_raw,
+            unit_code_norm,
+            move_out_date,
+            move_in_date,
+            validation_status,
+            conflict_flag,
+            conflict_reason,
+            report_type,
+            imported_at,
+            source_file_name
+        FROM diag
+        WHERE rn = 1
+        ORDER BY imported_at DESC, row_id""",
+        params,
+    )
+    return _rows_to_dicts(cursor.fetchall())
+
+
 def insert_audit_log(conn: sqlite3.Connection, data: dict) -> int:
     cursor = conn.execute(
         """INSERT INTO audit_log (

@@ -16,6 +16,7 @@ from db.repository.fas_tracker_notes import (
 )
 from db.repository.imports import (
     get_import_batch_by_checksum,
+    get_import_diagnostics,
     get_import_rows_by_batch,
     get_import_rows_pending_fas,
     get_missing_move_out_exceptions,
@@ -105,6 +106,7 @@ __all__ = [
     "get_first_phase_for_property",
     "get_fas_note",
     "get_import_batch_by_checksum",
+    "get_import_diagnostics",
     "get_import_rows_by_batch",
     "get_import_rows_pending_fas",
     "get_missing_move_out_exceptions",

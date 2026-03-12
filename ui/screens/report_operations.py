@@ -62,6 +62,30 @@ def _get_fas_tracker_rows():
             pass
 
 
+def _get_import_diagnostics_queue():
+    if not db_available():
+        return []
+    conn = get_conn()
+    if not conn:
+        return []
+    try:
+        from services import report_operations_service
+        active = get_active_property()
+        if not active:
+            return []
+        return report_operations_service.get_import_diagnostics_queue(
+            conn, property_id=active["property_id"]
+        )
+    except Exception as e:
+        st.error(str(e))
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _render_missing_move_out_tab(active_property: dict) -> None:
     from services import report_operations_service
 
@@ -191,14 +215,40 @@ def _render_fas_tracker_tab(active_property: dict) -> None:
             st.rerun()
 
 
+def _render_import_diagnostics_tab(active_property: dict) -> None:
+    st.subheader("Import Diagnostics")
+    st.caption(
+        "Non-OK import outcomes (ignored, conflict, invalid, skipped override). "
+        "Observational only; no state changes from this tab."
+    )
+    rows = _get_import_diagnostics_queue()
+    if not rows:
+        st.info("No diagnostic rows for the active property.")
+        return
+    df = pd.DataFrame([
+        {
+            "Unit": r.get("unit_code"),
+            "Report type": r.get("report_type"),
+            "Status": r.get("validation_status"),
+            "Conflict reason": r.get("conflict_reason") or "—",
+            "Import time": r.get("imported_at") or "—",
+            "Source file": r.get("source_file_name") or "—",
+        }
+        for r in rows
+    ])
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 def render() -> None:
     st.title("Report Operations")
     active_property = render_active_property_banner()
     if active_property is None:
         return
 
-    tab1, tab2 = st.tabs(["Missing Move-Out", "FAS Tracker"])
+    tab1, tab2, tab3 = st.tabs(["Missing Move-Out", "FAS Tracker", "Import Diagnostics"])
     with tab1:
         _render_missing_move_out_tab(active_property)
     with tab2:
         _render_fas_tracker_tab(active_property)
+    with tab3:
+        _render_import_diagnostics_tab(active_property)
