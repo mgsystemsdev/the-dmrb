@@ -80,6 +80,11 @@ def _build_flat_row(
         (n.get("description") or "") for n in notes_for_turnover if n.get("description")
     ).strip() or ""
 
+    # Prefer the explicit report_ready_date written by AVAILABLE_UNITS; when it is
+    # still missing for legacy turnovers, fall back to available_date so the board
+    # does not render a blank Ready Date.
+    effective_report_ready_date = turnover.get("report_ready_date") or turnover.get("available_date")
+
     return {
         "turnover_id": turnover_id,
         "unit_id": unit.get("unit_id"),
@@ -91,7 +96,7 @@ def _build_flat_row(
         "unit_number": unit_number,
         "move_out_date": turnover.get("move_out_date"),
         "move_in_date": turnover.get("move_in_date"),
-        "report_ready_date": turnover.get("report_ready_date"),
+        "report_ready_date": effective_report_ready_date,
         "scheduled_move_out_date": turnover.get("scheduled_move_out_date"),
         "confirmed_move_out_date": turnover.get("confirmed_move_out_date"),
         "legal_confirmation_source": turnover.get("legal_confirmation_source"),
