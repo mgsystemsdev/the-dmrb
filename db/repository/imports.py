@@ -80,6 +80,24 @@ def get_import_rows_by_batch(conn: sqlite3.Connection, batch_id: int) -> list[di
     return _rows_to_dicts(cursor.fetchall())
 
 
+def get_latest_import_rows(conn: sqlite3.Connection, report_type: str) -> list[dict]:
+    """Return import_row rows for the most recent batch of the given report_type.
+    Latest batch is chosen by imported_at DESC, batch_id DESC for determinism.
+    Returns [] if no batch exists for that report_type."""
+    cursor = conn.execute(
+        """SELECT batch_id FROM import_batch
+           WHERE report_type = ?
+           ORDER BY imported_at DESC, batch_id DESC
+           LIMIT 1""",
+        (report_type,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return []
+    batch_id = row[0]
+    return get_import_rows_by_batch(conn, batch_id)
+
+
 def get_missing_move_out_exceptions(conn: sqlite3.Connection) -> list[dict]:
     """Return import_row rows with conflict_reason MOVE_IN_WITHOUT_OPEN_TURNOVER or MOVE_OUT_DATE_MISSING, joined with batch for report_type and imported_at."""
     cursor = conn.execute(

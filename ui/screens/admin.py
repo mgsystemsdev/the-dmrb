@@ -423,8 +423,85 @@ def _render_add_availability() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Import helpers
+# Import helpers (centralized so "run import" and "load latest snapshot" stay in sync)
 # ---------------------------------------------------------------------------
+def _import_rows_to_display_values(rows: list[dict], report_type: str) -> list[dict]:
+    """Build display dicts for import_row list; shared by run-import and latest-snapshot paths."""
+    values: list[dict] = []
+    for r in rows:
+        try:
+            raw = json.loads(r.get("raw_json") or "{}")
+        except Exception:
+            raw = {}
+        base = {
+            "validation_status": r.get("validation_status"),
+            "conflict_flag": bool(r.get("conflict_flag")),
+            "conflict_reason": r.get("conflict_reason"),
+        }
+        if report_type == "AVAILABLE_UNITS":
+            base.update(
+                {
+                    "Unit": raw.get("Unit"),
+                    "Status": raw.get("Status"),
+                    "Available Date": raw.get("Available Date"),
+                    "Move-In Ready Date": raw.get("Move-In Ready Date"),
+                }
+            )
+        elif report_type == "MOVE_OUTS":
+            base.update(
+                {
+                    "Unit": raw.get("Unit"),
+                    "Move-Out Date": raw.get("Move-Out Date"),
+                }
+            )
+        elif report_type == "PENDING_MOVE_INS":
+            base.update(
+                {
+                    "Unit": raw.get("Unit"),
+                    "Move-In Date": raw.get("Move-In Date"),
+                }
+            )
+        elif report_type == "PENDING_FAS":
+            base.update(
+                {
+                    "Unit": raw.get("Unit"),
+                    "MO / Cancel Date": raw.get("MO / Cancel Date"),
+                }
+            )
+        values.append(base)
+    return values
+
+
+def _import_table_heading(report_type: str) -> str:
+    """Heading for the import rows table by report type."""
+    if report_type == "AVAILABLE_UNITS":
+        return "Available Units — Latest import"
+    if report_type == "MOVE_OUTS":
+        return "Move Outs — Latest import"
+    if report_type == "PENDING_MOVE_INS":
+        return "Pending Move-Ins — Latest import"
+    if report_type == "PENDING_FAS":
+        return "FAS — Latest import"
+    return "Latest import"
+
+
+def _render_latest_import_table(conn, report_type: str) -> None:
+    """Load latest batch rows for report_type and show table (persistent snapshot)."""
+    if not import_service_mod:
+        return
+    try:
+        rows = import_service_mod.get_latest_import_rows(conn, report_type)
+    except Exception:
+        rows = []
+    values = _import_rows_to_display_values(rows, report_type)
+    if not values:
+        return
+    st.markdown(f"### {_import_table_heading(report_type)}")
+    st.dataframe(
+        pd.DataFrame(values), use_container_width=True, hide_index=True
+    )
+
+
 def _run_import_for_report(
     *,
     report_type: str,
@@ -495,75 +572,6 @@ def _run_import_for_report(
                 st.write(line)
             if len(diagnostics) > 50:
                 st.caption(f"... and {len(diagnostics) - 50} more diagnostics.")
-
-        try:
-            rows = import_service_mod.get_import_rows_by_batch(conn, batch_id)
-        except Exception:
-            rows = []
-
-        if not rows:
-            return
-
-        values: list[dict] = []
-        for r in rows:
-            try:
-                raw = json.loads(r.get("raw_json") or "{}")
-            except Exception:
-                raw = {}
-
-            base = {
-                "validation_status": r.get("validation_status"),
-                "conflict_flag": bool(r.get("conflict_flag")),
-                "conflict_reason": r.get("conflict_reason"),
-            }
-
-            if report_type == "AVAILABLE_UNITS":
-                base.update(
-                    {
-                        "Unit": raw.get("Unit"),
-                        "Status": raw.get("Status"),
-                        "Available Date": raw.get("Available Date"),
-                        "Move-In Ready Date": raw.get("Move-In Ready Date"),
-                    }
-                )
-            elif report_type == "MOVE_OUTS":
-                base.update(
-                    {
-                        "Unit": raw.get("Unit"),
-                        "Move-Out Date": raw.get("Move-Out Date"),
-                    }
-                )
-            elif report_type == "PENDING_MOVE_INS":
-                base.update(
-                    {
-                        "Unit": raw.get("Unit"),
-                        "Move-In Date": raw.get("Move-In Date"),
-                    }
-                )
-            elif report_type == "PENDING_FAS":
-                base.update(
-                    {
-                        "Unit": raw.get("Unit"),
-                        "MO / Cancel Date": raw.get("MO / Cancel Date"),
-                    }
-                )
-            values.append(base)
-
-        if values:
-            if report_type == "AVAILABLE_UNITS":
-                heading = "Available Units — Imported Rows"
-            elif report_type == "MOVE_OUTS":
-                heading = "Move Outs — Imported Rows"
-            elif report_type == "PENDING_MOVE_INS":
-                heading = "Pending Move-Ins — Imported Rows"
-            elif report_type == "PENDING_FAS":
-                heading = "FAS — Imported Rows"
-            else:
-                heading = "Imported Rows"
-            st.markdown(f"### {heading}")
-            st.dataframe(
-                pd.DataFrame(values), use_container_width=True, hide_index=True
-            )
     except Exception as e:
         conn.rollback()
         payload = e.to_dict() if hasattr(e, "to_dict") else None
@@ -618,6 +626,7 @@ def _render_import() -> None:
     active_property = render_active_property_banner()
     if active_property is None:
         return
+    conn = get_conn()
     tab_available, tab_move_outs, tab_pending_move_ins, tab_fas = st.tabs(
         ["Available Units", "Move Outs", "Pending Move-Ins", "Final Account Statement (FAS)"]
     )
@@ -632,6 +641,8 @@ def _render_import() -> None:
                 uploaded=uploaded_au,
                 active_property=active_property,
             )
+        if conn:
+            _render_latest_import_table(conn, "AVAILABLE_UNITS")
 
     with tab_move_outs:
         uploaded_mo = st.file_uploader(
@@ -643,6 +654,8 @@ def _render_import() -> None:
                 uploaded=uploaded_mo,
                 active_property=active_property,
             )
+        if conn:
+            _render_latest_import_table(conn, "MOVE_OUTS")
 
     with tab_pending_move_ins:
         uploaded_pmi = st.file_uploader(
@@ -656,6 +669,8 @@ def _render_import() -> None:
                 uploaded=uploaded_pmi,
                 active_property=active_property,
             )
+        if conn:
+            _render_latest_import_table(conn, "PENDING_MOVE_INS")
 
     with tab_fas:
         uploaded_fas = st.file_uploader(
@@ -667,6 +682,14 @@ def _render_import() -> None:
                 uploaded=uploaded_fas,
                 active_property=active_property,
             )
+        if conn:
+            _render_latest_import_table(conn, "PENDING_FAS")
+
+    if conn:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     st.subheader("Conflicts")
     st.caption(
