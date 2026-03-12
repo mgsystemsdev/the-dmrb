@@ -13,6 +13,7 @@ from services import turnover_service
 from services.imports.common import (
     _append_diagnostic,
     _audit,
+    _ensure_unit,
     _filter_phase,
     _normalize_unit,
     _row_to_dict,
@@ -26,6 +27,8 @@ from services.imports.validation import _normalize_date_str, _normalize_status
 STATUSES_ALLOWING_TURNOVER_CREATION = frozenset((
     "vacant ready",
     "vacant not ready",
+    "beacon ready",
+    "beacon not ready",
     "on notice",
     "on notice (break)",
 ))
@@ -88,22 +91,26 @@ def apply_available_units(
         ready_iso = _to_iso_date(row.get("report_ready_date"))
         unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=row["unit_norm"])
         if unit_row is None:
-            _append_diagnostic(
-                diagnostics,
-                row_index=row_index,
-                column="Unit",
-                error_type="UNKNOWN_UNIT_REFERENCE",
-                error_message="Unit was not found for ready-date import row.",
-                suggestion="Ensure the unit exists and has an open turnover before importing.",
-            )
-            _write_import_row(
-                conn, batch_id, row,
-                validation_status="IGNORED",
-                conflict_reason="NO_OPEN_TURNOVER_FOR_READY_DATE",
-                move_out_date=None,
-                move_in_date=None,
-            )
-            continue
+            # Get-or-create unit when status allows turnover creation (same as Move-Outs), so Vacant/Beacon/On notice rows create the unit and turnover.
+            if _status_allows_turnover_creation(row.get("status")):
+                unit_row = _ensure_unit(conn, property_id, row["unit_raw"], row["unit_norm"])
+            else:
+                _append_diagnostic(
+                    diagnostics,
+                    row_index=row_index,
+                    column="Unit",
+                    error_type="UNKNOWN_UNIT_REFERENCE",
+                    error_message="Unit was not found for ready-date import row.",
+                    suggestion="Ensure the unit exists and has an open turnover before importing.",
+                )
+                _write_import_row(
+                    conn, batch_id, row,
+                    validation_status="IGNORED",
+                    conflict_reason="NO_OPEN_TURNOVER_FOR_READY_DATE",
+                    move_out_date=None,
+                    move_in_date=None,
+                )
+                continue
         unit_id = unit_row["unit_id"]
         open_turnover = _row_to_dict(repository.get_open_turnover_by_unit(conn, unit_id))
         if open_turnover is None:
