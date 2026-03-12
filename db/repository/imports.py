@@ -109,7 +109,7 @@ def get_latest_import_rows(conn: sqlite3.Connection, report_type: str) -> list[d
     row = cursor.fetchone()
     if not row:
         return []
-    batch_id = row[0]
+    batch_id = row["batch_id"] if isinstance(row, dict) else row[0]
     return get_import_rows_by_batch(conn, batch_id)
 
 
