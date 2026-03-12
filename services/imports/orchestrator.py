@@ -49,6 +49,14 @@ def import_report_file(
     source_file_name = os.path.basename(file_path)
     checksum = _sha256_file(report_type, file_path)
 
+    # For AVAILABLE_UNITS we must allow multiple imports of the same physical
+    # file (same bytes) to create new batches so that updated importer rules
+    # can be applied over time. The schema enforces a UNIQUE constraint on
+    # checksum, so we salt the checksum with a timestamp to keep it unique
+    # per import while still retaining the underlying file checksum prefix.
+    if report_type == AVAILABLE_UNITS:
+        checksum = f"{checksum}:{_now_iso()}"
+
     # Checksum-based NO_OP short-circuit is preserved for most report types,
     # but AVAILABLE_UNITS must always create a new batch so that importer
     # rule changes (e.g. vacancy invariants) can be re-applied even when
