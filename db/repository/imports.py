@@ -61,6 +61,34 @@ def get_import_rows_by_batch(conn: sqlite3.Connection, batch_id: int) -> list[di
     return _rows_to_dicts(cursor.fetchall())
 
 
+def get_missing_move_out_exceptions(conn: sqlite3.Connection) -> list[dict]:
+    """Return import_row rows with conflict_reason MOVE_IN_WITHOUT_OPEN_TURNOVER or MOVE_OUT_DATE_MISSING, joined with batch for report_type and imported_at."""
+    cursor = conn.execute(
+        """SELECT r.row_id, r.batch_id, r.unit_code_raw, r.unit_code_norm,
+                  r.move_out_date, r.move_in_date, r.conflict_reason,
+                  b.report_type, b.imported_at
+           FROM import_row r
+           JOIN import_batch b ON r.batch_id = b.batch_id
+           WHERE r.conflict_reason IN ('MOVE_IN_WITHOUT_OPEN_TURNOVER', 'MOVE_OUT_DATE_MISSING')
+           ORDER BY b.imported_at DESC, r.row_id"""
+    )
+    rows = cursor.fetchall()
+    return _rows_to_dicts(rows)
+
+
+def get_import_rows_pending_fas(conn: sqlite3.Connection) -> list[dict]:
+    """Return import_row rows from PENDING_FAS batches, joined with batch for imported_at."""
+    cursor = conn.execute(
+        """SELECT r.row_id, r.batch_id, r.unit_code_raw, r.unit_code_norm,
+                  r.move_out_date, r.move_in_date, b.imported_at
+           FROM import_row r
+           JOIN import_batch b ON r.batch_id = b.batch_id
+           WHERE b.report_type = 'PENDING_FAS'
+           ORDER BY b.imported_at DESC, r.row_id"""
+    )
+    return _rows_to_dicts(cursor.fetchall())
+
+
 def insert_audit_log(conn: sqlite3.Connection, data: dict) -> int:
     cursor = conn.execute(
         """INSERT INTO audit_log (

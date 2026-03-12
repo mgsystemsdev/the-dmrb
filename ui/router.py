@@ -9,6 +9,7 @@ _PAGE_TO_MODULE = {
     "dmrb_board": "board",
     "flag_bridge": "flag_bridge",
     "risk_radar": "risk_radar",
+    "report_operations": "report_operations",
     "detail": "turnover_detail",
     "dmrb_ai_agent": "ai_agent",
     "admin": "admin",

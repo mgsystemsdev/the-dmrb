@@ -10,9 +10,15 @@ from db.repository.chat import (
     insert_chat_session,
     update_chat_session_fields,
 )
+from db.repository.fas_tracker_notes import (
+    get_fas_note,
+    upsert_fas_tracker_note,
+)
 from db.repository.imports import (
     get_import_batch_by_checksum,
     get_import_rows_by_batch,
+    get_import_rows_pending_fas,
+    get_missing_move_out_exceptions,
     insert_audit_log,
     insert_import_batch,
     insert_import_row,
@@ -97,8 +103,11 @@ __all__ = [
     "get_chat_sessions",
     "get_enrichment_cache_for_turnover_ids",
     "get_first_phase_for_property",
+    "get_fas_note",
     "get_import_batch_by_checksum",
     "get_import_rows_by_batch",
+    "get_import_rows_pending_fas",
+    "get_missing_move_out_exceptions",
     "get_note_by_id",
     "get_notes_by_turnover",
     "get_notes_for_turnover_ids",
@@ -145,6 +154,7 @@ __all__ = [
     "update_task_fields",
     "update_turnover_fields",
     "update_unit_fields",
+    "upsert_fas_tracker_note",
     "upsert_risk",
     "upsert_turnover_enrichment_cache",
 ]
