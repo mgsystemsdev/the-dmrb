@@ -95,9 +95,7 @@ def get_import_diagnostics(conn: sqlite3.Connection, since_imported_at: str | No
     per (unit_code_norm, report_type). For Import Diagnostics tab.
     since_imported_at: optional ISO timestamp; only rows with b.imported_at >= this are returned.
     """
-    params = (since_imported_at, since_imported_at)
-    cursor = conn.execute(
-        """WITH diag AS (
+    base_sql = """WITH diag AS (
             SELECT
                 r.row_id,
                 r.batch_id,
@@ -118,7 +116,7 @@ def get_import_diagnostics(conn: sqlite3.Connection, since_imported_at: str | No
             FROM import_row r
             JOIN import_batch b ON r.batch_id = b.batch_id
             WHERE r.validation_status != 'OK'
-              AND (b.imported_at >= ? OR ? IS NULL)
+              {date_filter}
         )
         SELECT
             row_id,
@@ -135,9 +133,14 @@ def get_import_diagnostics(conn: sqlite3.Connection, since_imported_at: str | No
             source_file_name
         FROM diag
         WHERE rn = 1
-        ORDER BY imported_at DESC, row_id""",
-        params,
-    )
+        ORDER BY imported_at DESC, row_id"""
+    if since_imported_at is not None:
+        sql = base_sql.format(date_filter="AND b.imported_at >= ?")
+        params: tuple = (since_imported_at,)
+    else:
+        sql = base_sql.format(date_filter="")
+        params = ()
+    cursor = conn.execute(sql, params)
     return _rows_to_dicts(cursor.fetchall())
 
 
