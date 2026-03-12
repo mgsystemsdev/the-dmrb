@@ -486,20 +486,21 @@ def _import_table_heading(report_type: str) -> str:
 
 
 def _render_latest_import_table(conn, report_type: str) -> None:
-    """Load latest batch rows for report_type and show table (persistent snapshot)."""
+    """Load latest batch rows for report_type and show table (persistent, updated with every import)."""
     if not import_service_mod:
         return
+    st.markdown(f"### {_import_table_heading(report_type)}")
     try:
         rows = import_service_mod.get_latest_import_rows(conn, report_type)
     except Exception:
         rows = []
     values = _import_rows_to_display_values(rows, report_type)
-    if not values:
-        return
-    st.markdown(f"### {_import_table_heading(report_type)}")
-    st.dataframe(
-        pd.DataFrame(values), use_container_width=True, hide_index=True
-    )
+    if values:
+        st.dataframe(
+            pd.DataFrame(values), use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("No import data yet. Run an import above to populate this table.")
 
 
 def _run_import_for_report(
