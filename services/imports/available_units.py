@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
@@ -72,6 +72,48 @@ def _log_available_units_reconcile(message: str, data: dict, *, run_id: str, hyp
 
 
 # #endregion
+
+
+def _parse_move_in_ready_date(value: Any) -> date | None:
+    """
+    Parse Move-In Ready Date from CSV/raw_json into a date. Used by both
+    _parse_available_units and reconcile so the same value reaches report_ready_date.
+    Handles: None, str (e.g. '03/28/2025', '2025-03-28'), Excel serial (int/float),
+    pandas Timestamp.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if hasattr(value, "date") and callable(getattr(value, "date", None)):
+        try:
+            d = value.date()
+            if isinstance(d, date):
+                return d
+        except Exception:
+            pass
+    if isinstance(value, (int, float)) and pd.notna(value):
+        try:
+            # Excel serial: days since 1899-12-30
+            return pd.Timestamp("1899-12-30") + pd.Timedelta(days=int(value)).date()
+        except Exception:
+            pass
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        dt = pd.to_datetime(value, errors="coerce")
+        if pd.notna(dt) and hasattr(dt, "date"):
+            return dt.date()
+        # Try as Excel serial string
+        try:
+            n = int(value)
+            return pd.Timestamp("1899-12-30") + pd.Timedelta(days=n).date()
+        except (ValueError, TypeError):
+            pass
+    return None
 
 
 def reconcile_available_units_vacancy_invariant(conn, *, property_id: int, today: date, actor: str) -> None:
@@ -209,9 +251,10 @@ def reconcile_available_units_readiness_from_latest(
     Backfill readiness data (report_ready_date, available_date, availability_status) on turnovers
     from the latest AVAILABLE_UNITS batch.
 
-    This is safe to run after an import when turnovers exist but their readiness fields were not
-    fully populated by earlier logic. It reads raw_json from import_row so column mapping stays
-    aligned with the current report format.
+    Processes every row in the latest batch that has a unit with an open turnover *now*, regardless
+    of validation_status at import time. That way rows that were IGNORED (e.g. NO_OPEN_TURNOVER)
+    when the import ran get backfilled once the turnover exists (e.g. after a later Move-Out import).
+    Reads raw_json so column mapping stays aligned with the report format.
     """
     rows = repository.get_latest_import_rows(conn, "AVAILABLE_UNITS")
     if not rows:
@@ -226,10 +269,6 @@ def reconcile_available_units_readiness_from_latest(
     processed = 0
 
     for row in rows:
-        # Only consider rows that were successfully applied.
-        if row.get("validation_status") != "OK":
-            continue
-
         try:
             raw = _au_json.loads(row["raw_json"])
         except Exception:
@@ -247,10 +286,9 @@ def reconcile_available_units_readiness_from_latest(
 
         raw_available = raw.get("Available Date")
         raw_ready = raw.get("Move-In Ready Date")
+        ready_date = _parse_move_in_ready_date(raw_ready)
         dt_avail = pd.to_datetime(raw_available, errors="coerce") if raw_available else None
-        dt_ready = pd.to_datetime(raw_ready, errors="coerce") if raw_ready else None
         available_date = dt_avail.date() if dt_avail is not None and pd.notna(dt_avail) and hasattr(dt_avail, "date") else None
-        ready_date = dt_ready.date() if dt_ready is not None and pd.notna(dt_ready) and hasattr(dt_ready, "date") else None
 
         unit_row = repository.get_unit_by_norm(conn, property_id=property_id, unit_code_norm=unit_norm)
         if unit_row is None:
@@ -306,16 +344,17 @@ def _parse_available_units(file_path: str) -> list[dict]:
     for _, r in df.iterrows():
         raw = str(r["Unit"]) if pd.notna(r["Unit"]) else ""
         unit_raw, unit_norm = _normalize_unit(raw)
-        dt_ready = pd.to_datetime(r["Move-In Ready Date"], errors="coerce")
-        report_ready_date = dt_ready.date() if pd.notna(dt_ready) and hasattr(dt_ready, "date") else None
+        report_ready_date = _parse_move_in_ready_date(r["Move-In Ready Date"])
         dt_avail = pd.to_datetime(r["Available Date"], errors="coerce")
-        available_date = dt_avail.date() if pd.notna(dt_avail) and hasattr(dt_avail, "date") else None
+        available_date = dt_avail.date() if dt_avail is not None and pd.notna(dt_avail) and hasattr(dt_avail, "date") else None
         status = str(r["Status"]).strip() if pd.notna(r["Status"]) else None
+        # Store parseable value so reconcile and UI see the same Move-In Ready Date
+        move_in_ready_stored = report_ready_date.isoformat() if report_ready_date else (str(r["Move-In Ready Date"]) if pd.notna(r["Move-In Ready Date"]) else None)
         raw_json = json.dumps({
             "Unit": raw,
             "Status": r["Status"],
             "Available Date": r["Available Date"],
-            "Move-In Ready Date": r["Move-In Ready Date"],
+            "Move-In Ready Date": move_in_ready_stored,
         })
         rows.append({
             "unit_raw": unit_raw,

@@ -268,7 +268,7 @@ def render() -> None:
                 "Unit": row.get("unit_code", ""),
                 "Status": status_display,
                 "Move-Out": parse_date(row.get("move_out_date")),
-                "Ready Date": parse_date(row.get("report_ready_date")),
+                "Ready Date": parse_date(row.get("report_ready_date") or row.get("ready_date")),
                 "DV": row.get("dv"),
                 "Move-In": parse_date(row.get("move_in_date")),
                 "DTBR": row.get("dtbr"),
