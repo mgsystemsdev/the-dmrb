@@ -23,7 +23,13 @@ from services.imports.validation import _normalize_date_str
 
 
 def _parse_pending_move_ins(file_path: str) -> list[dict]:
-    df = pd.read_csv(file_path, skiprows=5)
+    # Skip header metadata rows and read only the two relevant columns.
+    # This ensures extra columns like Name or task statuses are ignored entirely.
+    df = pd.read_csv(
+        file_path,
+        skiprows=5,
+        usecols=["Unit", "Move In Date"],
+    )
     df = df[["Unit", "Move In Date"]].copy()
     rows = []
     for _, r in df.iterrows():
