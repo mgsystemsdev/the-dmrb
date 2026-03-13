@@ -13,17 +13,13 @@ Then compares which turnover_id the board is rendering and explains:
   - value exists but board cache is stale
 
 Usage (from repo root):
-  # SQLite (e.g. test or local DB)
-  TEST_MODE=true python scripts/diagnose_blank_ready_date.py
-  # Or with explicit path (SQLite)
-  python scripts/diagnose_blank_ready_date.py --db path/to/data.db
-
-  # Postgres (uses DATABASE_URL / app config)
+  # Default: Postgres (DATABASE_URL / app config)
   python scripts/diagnose_blank_ready_date.py
-
-  # Inspect a specific unit (unit_id or unit_code e.g. 5-7-101)
   python scripts/diagnose_blank_ready_date.py --unit 5-7-101
-  python scripts/diagnose_blank_ready_date.py --db path/to/data.db --unit 42
+
+  # SQLite (emergency/offline only)
+  python scripts/diagnose_blank_ready_date.py --db path/to/emergency.db
+  python scripts/diagnose_blank_ready_date.py --db path/to/emergency.db --unit 42
 """
 from __future__ import annotations
 
@@ -72,7 +68,7 @@ def _resolve_unit(conn, unit_arg):
 
 def _main():
     parser = argparse.ArgumentParser(description="Diagnose blank Ready Date on board")
-    parser.add_argument("--db", type=str, default=None, help="SQLite DB path (optional; else use app config)")
+    parser.add_argument("--db", type=str, default=None, help="SQLite DB path (emergency only; default is Postgres)")
     parser.add_argument("--unit", type=str, default=None, help="Unit to inspect: unit_id or unit_code (e.g. 5-7-101). If omitted, picks a unit with blank Ready Date or first open.")
     args = parser.parse_args()
 

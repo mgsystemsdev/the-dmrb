@@ -10,8 +10,10 @@ def resolve_database_config(db_path_override: str | None = None) -> DatabaseConf
     """
     Resolve database configuration for the current environment.
 
-    - When TEST_MODE=true: use a local SQLite database (for tests/offline runs).
-    - Otherwise: use the configured Postgres/Supabase URL (production behavior).
+    - Normal operation: Postgres only (DB_ENGINE=postgres, DATABASE_URL required).
+    - SQLite is for tests (TEST_MODE=true) and emergency/offline only; it is not
+      used for writing or as the default. Scripts and app use Postgres unless
+      explicitly pointed at a SQLite file (e.g. script --db/--sqlite).
     """
     if os.getenv("TEST_MODE", "").lower() == "true":
         # Tests use SQLite and must not attempt any Postgres connection.

@@ -11,8 +11,10 @@ Use this to see why the board shows blank Ready Date: wrong turnover, importer
 never wrote report_ready_date, or fallback removal exposed real NULLs.
 
 Usage (from repo root):
+  # Default: Postgres
   python scripts/turnover_timeline_debug.py --unit 5-7-101
-  python scripts/turnover_timeline_debug.py --db path/to/data.db --unit 42
+  # SQLite (emergency only)
+  python scripts/turnover_timeline_debug.py --db path/to/emergency.db --unit 42
 """
 from __future__ import annotations
 
@@ -66,7 +68,7 @@ def _resolve_unit(conn, unit_arg):
 
 def _main():
     parser = argparse.ArgumentParser(description="Turnover timeline debug view for a unit")
-    parser.add_argument("--db", type=str, default=None, help="SQLite DB path (optional)")
+    parser.add_argument("--db", type=str, default=None, help="SQLite DB path (emergency only; default is Postgres)")
     parser.add_argument("--unit", type=str, required=True, help="Unit: unit_id or unit_code (e.g. 5-7-101)")
     args = parser.parse_args()
 
