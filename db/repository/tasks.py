@@ -128,6 +128,7 @@ def ensure_default_task_templates(
     """
     If the phase (or property) has no active task templates, insert the default set
     so that new turnovers get tasks as soon as they have a move-out date.
+    Idempotent: skips insert when a template already exists for (property_id, task_type, is_active=1).
     """
     if phase_id is not None:
         templates = get_active_task_templates_by_phase(conn, phase_id=phase_id)
@@ -141,6 +142,12 @@ def ensure_default_task_templates(
         else:
             prop_id = row[0]
         for sort_order, (task_type, required, blocking) in enumerate(DEFAULT_TASK_TYPES):
+            existing = conn.execute(
+                "SELECT 1 FROM task_template WHERE property_id IS ? AND task_type = ? AND is_active = 1",
+                (prop_id, task_type),
+            ).fetchone()
+            if existing is not None:
+                continue
             insert_task_template(
                 conn,
                 phase_id=phase_id,
@@ -156,6 +163,12 @@ def ensure_default_task_templates(
         if templates:
             return
         for sort_order, (task_type, required, blocking) in enumerate(DEFAULT_TASK_TYPES):
+            existing = conn.execute(
+                "SELECT 1 FROM task_template WHERE property_id = ? AND task_type = ? AND is_active = 1",
+                (property_id, task_type),
+            ).fetchone()
+            if existing is not None:
+                continue
             insert_task_template(
                 conn,
                 phase_id=None,

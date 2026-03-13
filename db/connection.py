@@ -1,4 +1,6 @@
+import glob
 import os
+import sqlite3
 
 from db.adapters import get_adapter
 from db.adapters.base_adapter import ConnectionWrapper
@@ -53,21 +55,87 @@ def backup_database(db_path: str, backup_dir: str, batch_id: int) -> str:
     raise RuntimeError("Backup not implemented for postgres")
 
 
+def _current_schema_version_sqlite(conn: ConnectionWrapper) -> int:
+    """Return the current schema_version for SQLite, or 0 if missing."""
+    try:
+        row = conn.execute("SELECT version FROM schema_version WHERE singleton = 1").fetchone()
+        if row is None:
+            return 0
+        return row["version"] if isinstance(row, dict) else row[0]
+    except Exception:
+        return 0
+
+
+def _apply_sqlite_migrations(conn: ConnectionWrapper) -> None:
+    """Run migration files in order and update schema_version (SQLite placeholder style)."""
+    base_dir = os.path.dirname(__file__)
+    migrations_dir = os.path.join(base_dir, "migrations")
+    if not os.path.isdir(migrations_dir):
+        return
+    current = _current_schema_version_sqlite(conn)
+    files = sorted(glob.glob(os.path.join(migrations_dir, "*.sql")))
+    for fpath in files:
+        basename = os.path.basename(fpath)
+        num_str = basename.split("_", 1)[0]
+        try:
+            num = int(num_str)
+        except ValueError:
+            continue
+        if num <= current:
+            continue
+        # 001: report_ready_date may already exist in schema.sql; guard so migration is safe to run multiple times.
+        if num == 1:
+            rows = conn.execute("PRAGMA table_info(turnover)").fetchall()
+            columns = [row[1] for row in rows]
+            if "report_ready_date" not in columns:
+                conn.execute("ALTER TABLE turnover ADD COLUMN report_ready_date TEXT")
+            conn.execute(
+                "UPDATE schema_version SET version = ? WHERE singleton = 1",
+                (num,),
+            )
+            conn.commit()
+            continue
+        # 014 is Postgres-only (IDENTITY / DO $$); SQLite uses INTEGER PRIMARY KEY auto-increment.
+        if num == 14:
+            conn.execute(
+                "UPDATE schema_version SET version = ? WHERE singleton = 1",
+                (num,),
+            )
+            conn.commit()
+            continue
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                conn.executescript(f.read())
+        except sqlite3.OperationalError as e:
+            # schema.sql may already include columns/tables from earlier migrations.
+            # Treat duplicate column/table as already applied and continue.
+            msg = str(e).lower()
+            if "duplicate column" in msg or "duplicate column name" in msg or "already exists" in msg:
+                pass  # no-op, still bump version below
+            else:
+                raise
+        conn.execute(
+            "UPDATE schema_version SET version = ? WHERE singleton = 1",
+            (num,),
+        )
+        conn.commit()
+
+
 def _initialize_sqlite_schema(conn: ConnectionWrapper) -> None:
     """
     Initialize SQLite schema + migrations for test/runtime DB.
 
-    This is used only when TEST_MODE=true or when the resolved engine is sqlite.
+    Applies schema.sql then runs migrations so that phase, building, and other
+    migration-added structures exist (e.g. for import pipelines that resolve units).
     """
     base_dir = os.path.dirname(__file__)
     schema_path = os.path.join(base_dir, "schema.sql")
 
-    # Apply base schema only. The schema file is expected to represent the
-    # latest state, so migrations are not required for fresh test databases.
     with open(schema_path, "r", encoding="utf-8") as f:
         conn.executescript(f.read())
 
     conn.commit()
+    _apply_sqlite_migrations(conn)
 
 
 def ensure_database_ready(db_path: str) -> None:

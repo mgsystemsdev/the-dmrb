@@ -140,9 +140,7 @@ def import_report_file(
         applied_count, conflict_count, invalid_count, diagnostics = apply_available_units(
             conn, batch_id, rows, property_id, now_iso, actor, corr_id
         )
-        # After applying AVAILABLE_UNITS, reconcile the vacancy invariant so that
-        # legacy batches with Vacant rows and Available Date but no open turnover
-        # are brought into alignment with the current rules.
+        # Enforce vacancy invariant after AVAILABLE_UNITS import
         reconcile_available_units_vacancy_invariant(
             conn,
             property_id=property_id,

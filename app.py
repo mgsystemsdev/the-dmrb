@@ -8,7 +8,7 @@ Backend-only: app fails visibly if DB/services fail to load.
 import streamlit as st
 
 from ui.components.sidebar import render_navigation
-from ui.data.backend import BACKEND_AVAILABLE, BACKEND_ERROR
+from ui.data.backend import BACKEND_AVAILABLE, BACKEND_ERROR, bootstrap_backend_once
 from ui.router import render_current_page
 from ui.state import init_session_state
 
@@ -63,6 +63,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 init_session_state()
+bootstrap_backend_once()
 
 render_navigation(st.session_state.page)
 if render_top_flags is not None:

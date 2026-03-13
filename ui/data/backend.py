@@ -87,6 +87,38 @@ def _bootstrap_once() -> None:
     _BOOTSTRAPPED = True
 
 
+def bootstrap_backend_once() -> None:
+    """
+    One-time backend bootstrap for this process. Safe to call from app entrypoint.
+    Honors SKIP_DB_BOOTSTRAP; ensures DB schema and runs reconcile_missing_tasks.
+    Does not use Streamlit. Exported for use from app.py.
+    """
+    global _BOOTSTRAPPED
+    if _BOOTSTRAPPED:
+        return
+
+    skip = os.getenv("SKIP_DB_BOOTSTRAP", "").strip().lower()
+    if skip in ("1", "true", "yes", "on", "y"):
+        _BOOTSTRAPPED = True
+        return
+
+    if get_connection is None or ensure_database_ready is None or turnover_service_mod is None:
+        _BOOTSTRAPPED = True
+        return
+
+    ensure_database_ready(get_db_path())
+
+    conn = get_connection(get_db_path())
+    try:
+        backfilled = turnover_service_mod.reconcile_missing_tasks(conn)
+        if backfilled:
+            conn.commit()
+    finally:
+        conn.close()
+
+    _BOOTSTRAPPED = True
+
+
 try:
     from db.connection import get_connection as _get_connection, ensure_database_ready as _ensure_database_ready
     from db import repository as db_repository
