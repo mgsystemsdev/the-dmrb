@@ -219,74 +219,74 @@ def test_scheduled_move_out_override_skip_and_clear():
             conn.execute("INSERT OR IGNORE INTO property (property_id, name) VALUES (1, 'P')")
             conn.commit()
             today = date.today()
-        unit_code = "5-A-301"
-        csv_create = "\n".join(
-            ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},2025-01-05", ""]
-        )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write(csv_create)
-            p = f.name
-        try:
-            import_service.import_report_file(conn=conn, report_type=import_service.MOVE_OUTS, file_path=p, property_id=1, today=today)
+            unit_code = "5-A-301"
+            csv_create = "\n".join(
+                ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},2025-01-05", ""]
+            )
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+                f.write(csv_create)
+                p = f.name
+            try:
+                import_service.import_report_file(conn=conn, report_type=import_service.MOVE_OUTS, file_path=p, property_id=1, today=today)
+                conn.commit()
+            finally:
+                os.unlink(p)
+            unit_row = repository.get_unit_by_norm(conn, property_id=1, unit_code_norm=unit_code)
+            open_t = repository.get_open_turnover_by_unit(conn, unit_row["unit_id"])
+            tid = open_t["turnover_id"]
+            repository.update_turnover_fields(
+                conn, tid, {"scheduled_move_out_date": "2025-01-10", "move_out_manual_override_at": "2025-02-01T12:00:00"}
+            )
             conn.commit()
-        finally:
-            os.unlink(p)
-        unit_row = repository.get_unit_by_norm(conn, property_id=1, unit_code_norm=unit_code)
-        open_t = repository.get_open_turnover_by_unit(conn, unit_row["unit_id"])
-        tid = open_t["turnover_id"]
-        repository.update_turnover_fields(
-            conn, tid, {"scheduled_move_out_date": "2025-01-10", "move_out_manual_override_at": "2025-02-01T12:00:00"}
-        )
-        conn.commit()
-        pre_row = conn.execute(
-            "SELECT scheduled_move_out_date, move_out_manual_override_at FROM turnover WHERE turnover_id = ?", (tid,)
-        ).fetchone()
-        assert pre_row["move_out_manual_override_at"] is not None, "Override must be set before second import"
+            pre_row = conn.execute(
+                "SELECT scheduled_move_out_date, move_out_manual_override_at FROM turnover WHERE turnover_id = ?", (tid,)
+            ).fetchone()
+            assert pre_row["move_out_manual_override_at"] is not None, "Override must be set before second import"
 
-        csv_different = "\n".join(
-            ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},2025-01-20", ""]
-        )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write(csv_different)
-            p = f.name
-        try:
-            res = import_service.import_report_file(conn=conn, report_type=import_service.MOVE_OUTS, file_path=p, property_id=1, today=today)
-            conn.commit()
-            assert res.get("status") != "NO_OP", "Second import must not be NO_OP (checksum collision)"
-        finally:
-            os.unlink(p)
-        row = conn.execute("SELECT scheduled_move_out_date, move_out_manual_override_at FROM turnover WHERE turnover_id = ?", (tid,)).fetchone()
-        assert row["scheduled_move_out_date"] == "2025-01-10", "Import must not overwrite when override set and value differs"
-        assert row["move_out_manual_override_at"] is not None
-        skip_audits = conn.execute(
-            "SELECT * FROM audit_log WHERE entity_type = 'turnover' AND entity_id = ? AND field_name = 'import_skipped_due_to_manual_override'",
-            (tid,),
-        ).fetchall()
-        assert len(skip_audits) >= 1, (
-            f"Expected at least one import_skipped_due_to_manual_override audit for turnover_id={tid}; "
-            f"audit_log count for entity_id={tid}: "
-            f"{conn.execute('SELECT COUNT(*) FROM audit_log WHERE entity_id = ?', (tid,)).fetchone()[0]}"
-        )
+            csv_different = "\n".join(
+                ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},2025-01-20", ""]
+            )
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+                f.write(csv_different)
+                p = f.name
+            try:
+                res = import_service.import_report_file(conn=conn, report_type=import_service.MOVE_OUTS, file_path=p, property_id=1, today=today)
+                conn.commit()
+                assert res.get("status") != "NO_OP", "Second import must not be NO_OP (checksum collision)"
+            finally:
+                os.unlink(p)
+            row = conn.execute("SELECT scheduled_move_out_date, move_out_manual_override_at FROM turnover WHERE turnover_id = ?", (tid,)).fetchone()
+            assert row["scheduled_move_out_date"] == "2025-01-10", "Import must not overwrite when override set and value differs"
+            assert row["move_out_manual_override_at"] is not None
+            skip_audits = conn.execute(
+                "SELECT * FROM audit_log WHERE entity_type = 'turnover' AND entity_id = ? AND field_name = 'import_skipped_due_to_manual_override'",
+                (tid,),
+            ).fetchall()
+            assert len(skip_audits) >= 1, (
+                f"Expected at least one import_skipped_due_to_manual_override audit for turnover_id={tid}; "
+                f"audit_log count for entity_id={tid}: "
+                f"{conn.execute('SELECT COUNT(*) FROM audit_log WHERE entity_id = ?', (tid,)).fetchone()[0]}"
+            )
 
-        csv_same = "\n".join(
-            ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},2025-01-10", ""]
-        )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write(csv_same)
-            p = f.name
-        try:
-            import_service.import_report_file(conn=conn, report_type=import_service.MOVE_OUTS, file_path=p, property_id=1, today=today)
-            conn.commit()
-        finally:
-            os.unlink(p)
-        row2 = conn.execute("SELECT scheduled_move_out_date, move_out_manual_override_at FROM turnover WHERE turnover_id = ?", (tid,)).fetchone()
-        assert row2["scheduled_move_out_date"] == "2025-01-10"
-        assert row2["move_out_manual_override_at"] is None, "Override must be cleared when import matches"
-        cleared = conn.execute(
-            "SELECT * FROM audit_log WHERE entity_id = ? AND field_name = 'manual_override_cleared' AND new_value LIKE '%scheduled_move_out_date%'",
-            (tid,),
-        ).fetchall()
-        assert len(cleared) >= 1
+            csv_same = "\n".join(
+                ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},2025-01-10", ""]
+            )
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+                f.write(csv_same)
+                p = f.name
+            try:
+                import_service.import_report_file(conn=conn, report_type=import_service.MOVE_OUTS, file_path=p, property_id=1, today=today)
+                conn.commit()
+            finally:
+                os.unlink(p)
+            row2 = conn.execute("SELECT scheduled_move_out_date, move_out_manual_override_at FROM turnover WHERE turnover_id = ?", (tid,)).fetchone()
+            assert row2["scheduled_move_out_date"] == "2025-01-10"
+            assert row2["move_out_manual_override_at"] is None, "Override must be cleared when import matches"
+            cleared = conn.execute(
+                "SELECT * FROM audit_log WHERE entity_id = ? AND field_name = 'manual_override_cleared' AND new_value LIKE '%scheduled_move_out_date%'",
+                (tid,),
+            ).fetchall()
+            assert len(cleared) >= 1
         finally:
             conn.close()
     finally:
@@ -299,59 +299,61 @@ def test_skip_scheduled_move_out_does_not_trigger_sla_reconcile():
     try:
         ensure_database_ready(path)
         conn = get_connection(path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("INSERT OR IGNORE INTO property (property_id, name) VALUES (1, 'P')")
-        conn.commit()
-        today = date.today()
-        unit_code = "5-A-401"
-        old_mo = (date.today() - timedelta(days=20)).isoformat()
-        csv_create = "\n".join(
-            ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},{old_mo}", ""]
-        )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write(csv_create)
-            p = f.name
         try:
-            import_service.import_report_file(conn=conn, report_type=import_service.MOVE_OUTS, file_path=p, property_id=1, today=today)
+            conn.row_factory = sqlite3.Row
+            conn.execute("INSERT OR IGNORE INTO property (property_id, name) VALUES (1, 'P')")
             conn.commit()
-        finally:
-            os.unlink(p)
-        unit_row = repository.get_unit_by_norm(conn, property_id=1, unit_code_norm=unit_code)
-        open_t = repository.get_open_turnover_by_unit(conn, unit_row["unit_id"])
-        tid = open_t["turnover_id"]
-        repository.update_turnover_fields(
-            conn, tid,
-            {"scheduled_move_out_date": "2025-01-05", "move_out_manual_override_at": "2025-02-01T12:00:00"},
-        )
-        conn.commit()
-        turnover_service.set_manual_ready_status(
-            conn=conn, turnover_id=tid, manual_ready_status="Vacant not ready", today=today, actor="manager"
-        )
-        conn.commit()
-        sla_before = conn.execute("SELECT COUNT(*) FROM sla_event WHERE turnover_id = ?", (tid,)).fetchone()[0]
-        breach_open_before = conn.execute(
-            "SELECT COUNT(*) FROM sla_event WHERE turnover_id = ? AND breach_resolved_at IS NULL", (tid,)
-        ).fetchone()[0]
-
-        csv_body = "\n".join(
-            ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},2025-01-25", ""]
-        )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write(csv_body)
-            p = f.name
-        try:
-            import_service.import_report_file(conn=conn, report_type=import_service.MOVE_OUTS, file_path=p, property_id=1, today=today)
+            today = date.today()
+            unit_code = "5-A-401"
+            old_mo = (date.today() - timedelta(days=20)).isoformat()
+            csv_create = "\n".join(
+                ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},{old_mo}", ""]
+            )
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+                f.write(csv_create)
+                p = f.name
+            try:
+                import_service.import_report_file(conn=conn, report_type=import_service.MOVE_OUTS, file_path=p, property_id=1, today=today)
+                conn.commit()
+            finally:
+                os.unlink(p)
+            unit_row = repository.get_unit_by_norm(conn, property_id=1, unit_code_norm=unit_code)
+            open_t = repository.get_open_turnover_by_unit(conn, unit_row["unit_id"])
+            tid = open_t["turnover_id"]
+            repository.update_turnover_fields(
+                conn, tid,
+                {"scheduled_move_out_date": "2025-01-05", "move_out_manual_override_at": "2025-02-01T12:00:00"},
+            )
             conn.commit()
-        finally:
-            os.unlink(p)
+            turnover_service.set_manual_ready_status(
+                conn=conn, turnover_id=tid, manual_ready_status="Vacant not ready", today=today, actor="manager"
+            )
+            conn.commit()
+            sla_before = conn.execute("SELECT COUNT(*) FROM sla_event WHERE turnover_id = ?", (tid,)).fetchone()[0]
+            breach_open_before = conn.execute(
+                "SELECT COUNT(*) FROM sla_event WHERE turnover_id = ? AND breach_resolved_at IS NULL", (tid,)
+            ).fetchone()[0]
 
-        sla_after = conn.execute("SELECT COUNT(*) FROM sla_event WHERE turnover_id = ?", (tid,)).fetchone()[0]
-        breach_open_after = conn.execute(
-            "SELECT COUNT(*) FROM sla_event WHERE turnover_id = ? AND breach_resolved_at IS NULL", (tid,)
-        ).fetchone()[0]
-        assert sla_after == sla_before, "No new SLA event when update skipped"
-        assert breach_open_after == breach_open_before, "No SLA breach state change when update skipped"
-        conn.close()
+            csv_body = "\n".join(
+                ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},2025-01-25", ""]
+            )
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+                f.write(csv_body)
+                p = f.name
+            try:
+                import_service.import_report_file(conn=conn, report_type=import_service.MOVE_OUTS, file_path=p, property_id=1, today=today)
+                conn.commit()
+            finally:
+                os.unlink(p)
+
+            sla_after = conn.execute("SELECT COUNT(*) FROM sla_event WHERE turnover_id = ?", (tid,)).fetchone()[0]
+            breach_open_after = conn.execute(
+                "SELECT COUNT(*) FROM sla_event WHERE turnover_id = ? AND breach_resolved_at IS NULL", (tid,)
+            ).fetchone()[0]
+            assert sla_after == sla_before, "No new SLA event when update skipped"
+            assert breach_open_after == breach_open_before, "No SLA breach state change when update skipped"
+        finally:
+            conn.close()
     finally:
         os.unlink(path)
 

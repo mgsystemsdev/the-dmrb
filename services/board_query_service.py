@@ -260,11 +260,6 @@ def get_dmrb_board_rows(
         dv = r.get("dv") or 0
         return (0 if move_in is None else 1, move_in or date.max, -dv)
 
-    # Temporary diagnostic: confirm board row keys (report_ready_date vs ready_date) before render.
-    if rows:
-        sample = {k: rows[0].get(k) for k in ("report_ready_date", "ready_date", "available_date") if k in rows[0]}
-        print("BOARD ROW SAMPLE (ready date keys):", sample)
-
     rows.sort(key=_sort_move_in)
     return rows
 

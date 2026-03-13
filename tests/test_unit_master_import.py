@@ -61,24 +61,26 @@ def test_run_unit_master_import_strict_mode_fails_missing_unit():
     try:
         ensure_database_ready(path)
         conn = get_connection(path)
-        conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'P')")
-        conn.commit()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write("L1\nL2\nL3\nL4\n")
-            f.write("Unit,Floor Plan,Gross Sq. Ft.,Status\n")
-            f.write("  5-1-101, 4a2,672,Ok\n")
-            f.flush()
-            csv_path = f.name
         try:
-            result = unit_master_import_service.run_unit_master_import(
-                conn, csv_path, property_id=1, strict_mode=True
-            )
-            assert result["status"] == "FAILED"
-            assert result["conflict_count"] == 1
-            assert result["applied_count"] == 0
+            conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'P')")
+            conn.commit()
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+                f.write("L1\nL2\nL3\nL4\n")
+                f.write("Unit,Floor Plan,Gross Sq. Ft.,Status\n")
+                f.write("  5-1-101, 4a2,672,Ok\n")
+                f.flush()
+                csv_path = f.name
+            try:
+                result = unit_master_import_service.run_unit_master_import(
+                    conn, csv_path, property_id=1, strict_mode=True
+                )
+                assert result["status"] == "FAILED"
+                assert result["conflict_count"] == 1
+                assert result["applied_count"] == 0
+            finally:
+                os.unlink(csv_path)
         finally:
-            os.unlink(csv_path)
-        conn.close()
+            conn.close()
     finally:
         os.unlink(path)
 
@@ -88,40 +90,42 @@ def test_run_unit_master_import_repair_mode_creates_and_idempotent():
     try:
         ensure_database_ready(path)
         conn = get_connection(path)
-        conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'P')")
-        conn.commit()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write("L1\nL2\nL3\nL4\n")
-            f.write("Unit,Floor Plan,Gross Sq. Ft.,Status\n")
-            f.write("  5-1-101, 4a2,672,Ok\n")
-            f.write("  7-2-201, 7B1,780,Ok\n")
-            f.flush()
-            csv_path = f.name
         try:
-            result = unit_master_import_service.run_unit_master_import(
-                conn, csv_path, property_id=1, strict_mode=False
-            )
-            assert result["status"] == "SUCCESS"
-            assert result["applied_count"] == 2
-            assert result["conflict_count"] == 0
-            u1 = repository.get_unit_by_identity_key(conn, property_id=1, unit_identity_key="5-1-101")
-            assert u1 is not None
-            assert u1["floor_plan"] == "4a2"
-            assert u1["gross_sq_ft"] == 672
-            # Idempotent: run again — checksum match → NO_OP
-            result2 = unit_master_import_service.run_unit_master_import(
-                conn, csv_path, property_id=1, strict_mode=False
-            )
-            assert result2["status"] == "NO_OP"
-            assert result2["applied_count"] == 0
-            u1_again = repository.get_unit_by_identity_key(conn, property_id=1, unit_identity_key="5-1-101")
-            assert u1_again["unit_id"] == u1["unit_id"]
-            # No turnover created
-            count = conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0]
-            assert count == 0
+            conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'P')")
+            conn.commit()
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+                f.write("L1\nL2\nL3\nL4\n")
+                f.write("Unit,Floor Plan,Gross Sq. Ft.,Status\n")
+                f.write("  5-1-101, 4a2,672,Ok\n")
+                f.write("  7-2-201, 7B1,780,Ok\n")
+                f.flush()
+                csv_path = f.name
+            try:
+                result = unit_master_import_service.run_unit_master_import(
+                    conn, csv_path, property_id=1, strict_mode=False
+                )
+                assert result["status"] == "SUCCESS"
+                assert result["applied_count"] == 2
+                assert result["conflict_count"] == 0
+                u1 = repository.get_unit_by_identity_key(conn, property_id=1, unit_identity_key="5-1-101")
+                assert u1 is not None
+                assert u1["floor_plan"] == "4a2"
+                assert u1["gross_sq_ft"] == 672
+                # Idempotent: run again — checksum match → NO_OP
+                result2 = unit_master_import_service.run_unit_master_import(
+                    conn, csv_path, property_id=1, strict_mode=False
+                )
+                assert result2["status"] == "NO_OP"
+                assert result2["applied_count"] == 0
+                u1_again = repository.get_unit_by_identity_key(conn, property_id=1, unit_identity_key="5-1-101")
+                assert u1_again["unit_id"] == u1["unit_id"]
+                # No turnover created
+                count = conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0]
+                assert count == 0
+            finally:
+                os.unlink(csv_path)
         finally:
-            os.unlink(csv_path)
-        conn.close()
+            conn.close()
     finally:
         os.unlink(path)
 
@@ -131,33 +135,35 @@ def test_list_unit_master_import_units_returns_import_fields_only_and_sorted():
     try:
         ensure_database_ready(path)
         conn = get_connection(path)
-        conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'P')")
-        conn.execute(
-            """
-            INSERT INTO unit (
-                property_id, unit_code_raw, unit_code_norm, phase_code, building_code,
-                unit_number, unit_identity_key, floor_plan, gross_sq_ft
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (1, "7-2-201", "7-2-201", "7", "2", "201", "7-2-201", "B1", 780),
-        )
-        conn.execute(
-            """
-            INSERT INTO unit (
-                property_id, unit_code_raw, unit_code_norm, phase_code, building_code,
-                unit_number, unit_identity_key, floor_plan, gross_sq_ft
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (1, "5-1-101", "5-1-101", "5", "1", "101", "5-1-101", "A2", 672),
-        )
-        conn.commit()
+        try:
+            conn.execute("INSERT INTO property (property_id, name) VALUES (1, 'P')")
+            conn.execute(
+                """
+                INSERT INTO unit (
+                    property_id, unit_code_raw, unit_code_norm, phase_code, building_code,
+                    unit_number, unit_identity_key, floor_plan, gross_sq_ft
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (1, "7-2-201", "7-2-201", "7", "2", "201", "7-2-201", "B1", 780),
+            )
+            conn.execute(
+                """
+                INSERT INTO unit (
+                    property_id, unit_code_raw, unit_code_norm, phase_code, building_code,
+                    unit_number, unit_identity_key, floor_plan, gross_sq_ft
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (1, "5-1-101", "5-1-101", "5", "1", "101", "5-1-101", "A2", 672),
+            )
+            conn.commit()
 
-        rows = repository.list_unit_master_import_units(conn)
+            rows = repository.list_unit_master_import_units(conn)
 
-        assert rows == [
-            {"unit_code_raw": "5-1-101", "unit_type": "A2", "square_feet": 672},
-            {"unit_code_raw": "7-2-201", "unit_type": "B1", "square_feet": 780},
-        ]
-        conn.close()
+            assert rows == [
+                {"unit_code_raw": "5-1-101", "unit_type": "A2", "square_feet": 672},
+                {"unit_code_raw": "7-2-201", "unit_type": "B1", "square_feet": 780},
+            ]
+        finally:
+            conn.close()
     finally:
         os.unlink(path)
