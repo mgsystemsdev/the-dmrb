@@ -266,16 +266,15 @@ def reconcile_available_units_readiness_from_latest(
         old_available = open_turnover.get("available_date")
         old_status = open_turnover.get("availability_status")
 
-        # Effective ready date: prefer explicit ready, else fall back to available.
-        effective_ready = ready_date or available_date
-        effective_ready_iso = effective_ready.isoformat() if effective_ready else None
-        available_iso = available_date.isoformat() if available_date else effective_ready_iso
+        # Lifecycle: report_ready_date = Move-In Ready only; available_date = vacancy only. No cross-fill.
+        ready_iso = ready_date.isoformat() if ready_date else None
+        available_iso = available_date.isoformat() if available_date else None
 
         update_fields: dict[str, Any] = {"updated_at": today.isoformat()}
 
-        if effective_ready_iso is not None and old_ready != effective_ready_iso:
-            update_fields["report_ready_date"] = effective_ready_iso
-            _audit(conn, tid, "report_ready_date", old_ready, effective_ready_iso, actor, corr_id)
+        if ready_iso is not None and old_ready != ready_iso:
+            update_fields["report_ready_date"] = ready_iso
+            _audit(conn, tid, "report_ready_date", old_ready, ready_iso, actor, corr_id)
 
         if available_iso is not None and old_available != available_iso:
             update_fields["available_date"] = available_iso
@@ -438,10 +437,9 @@ def apply_available_units(
                     continue
                 tid = new_turnover["turnover_id"]
                 status_val = (row.get("status") or "").strip() or None
-                # Prefer explicit Move-In Ready Date, but when missing fall back to Available Date
-                ready_date_value = row.get("report_ready_date") or available_date
-                ready_iso_from_row = _to_iso_date(ready_date_value)
-                available_date_iso = _to_iso_date(row.get("available_date")) or ready_iso_from_row
+                # Lifecycle: report_ready_date = Move-In Ready only; available_date = vacancy only. No cross-fill.
+                ready_iso_from_row = _to_iso_date(row.get("report_ready_date"))
+                available_date_iso = _to_iso_date(row.get("available_date"))
                 update_fields = {
                     "report_ready_date": ready_iso_from_row,
                     "available_date": available_date_iso,
@@ -522,18 +520,18 @@ def apply_available_units(
         incoming_status_norm = _normalize_status(status_val)
         old_status = open_turnover.get("availability_status")
 
-        # Determine which date to treat as the incoming "ready" signal: prefer explicit ready date,
-        # but fall back to available_date when ready is missing.
-        effective_ready_iso = ready_iso or _to_iso_date(available_date)
+        # Lifecycle: report_ready_date = Move-In Ready only; available_date = vacancy only. No cross-fill.
+        available_date_iso = _to_iso_date(available_date)
 
         if override_at is not None and ready_iso is not None:
             # Ready-date override exists and we have an incoming ready date to compare.
             if current_ready_norm == incoming_ready_norm:
                 update_fields = {"report_ready_date": ready_iso, "updated_at": now_iso, "ready_manual_override_at": None}
                 _audit(conn, tid, "manual_override_cleared", None, "report_ready_date|validated_by=AVAILABLE_UNITS", actor, corr_id)
-                update_fields["available_date"] = ready_iso
-                if old_available != ready_iso:
-                    _audit(conn, tid, "available_date", old_available, ready_iso, actor, corr_id)
+                if available_date_iso is not None:
+                    update_fields["available_date"] = available_date_iso
+                    if old_available != available_date_iso:
+                        _audit(conn, tid, "available_date", old_available, available_date_iso, actor, corr_id)
                 if status_override_at is not None:
                     if current_status_norm == incoming_status_norm:
                         update_fields["availability_status"] = status_val
@@ -558,15 +556,14 @@ def apply_available_units(
                         _write_skip_audit_if_new(conn, tid, "availability_status", "AVAILABLE_UNITS", incoming_status_norm, actor, corr_id)
         else:
             update_fields: dict[str, Any] = {"updated_at": now_iso}
-            # If we have an effective ready date (ready or available), keep report_ready_date aligned.
-            if effective_ready_iso is not None:
-                if old_ready != effective_ready_iso:
-                    update_fields["report_ready_date"] = effective_ready_iso
-                    _audit(conn, tid, "report_ready_date", old_ready, effective_ready_iso, actor, corr_id)
-                    applied_count += 1
-                update_fields["available_date"] = effective_ready_iso
-                if old_available != effective_ready_iso:
-                    _audit(conn, tid, "available_date", old_available, effective_ready_iso, actor, corr_id)
+            # report_ready_date = Move-In Ready only; available_date = vacancy only.
+            if ready_iso is not None and old_ready != ready_iso:
+                update_fields["report_ready_date"] = ready_iso
+                _audit(conn, tid, "report_ready_date", old_ready, ready_iso, actor, corr_id)
+                applied_count += 1
+            if available_date_iso is not None and old_available != available_date_iso:
+                update_fields["available_date"] = available_date_iso
+                _audit(conn, tid, "available_date", old_available, available_date_iso, actor, corr_id)
             # Always attempt to synchronize availability_status with override protection.
             if status_override_at is not None:
                 if current_status_norm == incoming_status_norm:
