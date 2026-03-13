@@ -175,84 +175,85 @@ def test_insert_turnover_with_legal_source_but_no_confirmed_date_triggers_invari
     try:
         ensure_database_ready(path)
         conn = get_connection(path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("INSERT OR IGNORE INTO property (property_id, name) VALUES (1, 'P')")
-        conn.commit()
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("INSERT OR IGNORE INTO property (property_id, name) VALUES (1, 'P')")
+            conn.commit()
 
-        # Create a unit via repository so identity is valid.
-        phase_row = repository.resolve_phase(conn, property_id=1, phase_code="5")
-        building_row = repository.resolve_building(conn, phase_id=phase_row["phase_id"], building_code="A")
-        unit_id = repository.insert_unit(
-            conn,
-            {
-                "property_id": 1,
-                "unit_code_raw": "5-A-201",
-                "unit_code_norm": "5-A-201",
-                "phase_code": "5",
-                "building_code": "A",
-                "unit_number": "201",
-                "unit_identity_key": "5-A-201",
-                "phase_id": phase_row["phase_id"],
-                "building_id": building_row["building_id"],
-            },
-        )
-        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            # Create a unit via repository so identity is valid.
+            phase_row = repository.resolve_phase(conn, property_id=1, phase_code="5")
+            building_row = repository.resolve_building(conn, phase_id=phase_row["phase_id"], building_code="A")
+            unit_id = repository.insert_unit(
+                conn,
+                {
+                    "property_id": 1,
+                    "unit_code_raw": "5-A-201",
+                    "unit_code_norm": "5-A-201",
+                    "phase_code": "5",
+                    "building_code": "A",
+                    "unit_number": "201",
+                    "unit_identity_key": "5-A-201",
+                    "phase_id": phase_row["phase_id"],
+                    "building_id": building_row["building_id"],
+                },
+            )
+            now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
-        # Insert turnover with legal_confirmation_source but no confirmed_move_out_date.
-        turnover_id = repository.insert_turnover(
-            conn,
-            {
-                "property_id": 1,
-                "unit_id": unit_id,
-                "source_turnover_key": "k-legal-source-only",
-                "move_out_date": "2025-01-01",
-                "move_in_date": None,
-                "report_ready_date": None,
-                "manual_ready_status": None,
-                "manual_ready_confirmed_at": None,
-                "expedited_flag": 0,
-                "wd_present": None,
-                "wd_supervisor_notified": None,
-                "wd_notified_at": None,
-                "wd_installed": None,
-                "wd_installed_at": None,
-                "closed_at": None,
-                "canceled_at": None,
-                "cancel_reason": None,
-                "last_seen_moveout_batch_id": None,
-                "missing_moveout_count": 0,
-                "created_at": now,
-                "updated_at": now,
-                "scheduled_move_out_date": None,
-                "confirmed_move_out_date": None,
-                "legal_confirmation_source": "manual",
-                "legal_confirmed_at": None,
-                "legal_confirmation_note": None,
-                "available_date": None,
-                "availability_status": None,
-            },
-        )
-        conn.commit()
+            # Insert turnover with legal_confirmation_source but no confirmed_move_out_date.
+            turnover_id = repository.insert_turnover(
+                conn,
+                {
+                    "property_id": 1,
+                    "unit_id": unit_id,
+                    "source_turnover_key": "k-legal-source-only",
+                    "move_out_date": "2025-01-01",
+                    "move_in_date": None,
+                    "report_ready_date": None,
+                    "manual_ready_status": None,
+                    "manual_ready_confirmed_at": None,
+                    "expedited_flag": 0,
+                    "wd_present": None,
+                    "wd_supervisor_notified": None,
+                    "wd_notified_at": None,
+                    "wd_installed": None,
+                    "wd_installed_at": None,
+                    "closed_at": None,
+                    "canceled_at": None,
+                    "cancel_reason": None,
+                    "last_seen_moveout_batch_id": None,
+                    "missing_moveout_count": 0,
+                    "created_at": now,
+                    "updated_at": now,
+                    "scheduled_move_out_date": None,
+                    "confirmed_move_out_date": None,
+                    "legal_confirmation_source": "manual",
+                    "legal_confirmed_at": None,
+                    "legal_confirmation_note": None,
+                    "available_date": None,
+                    "availability_status": None,
+                },
+            )
+            conn.commit()
 
-        # Invariant handling should have fired.
-        risks = conn.execute(
-            "SELECT * FROM risk_flag WHERE turnover_id = ? AND risk_type = 'DATA_INTEGRITY' AND resolved_at IS NULL",
-            (turnover_id,),
-        ).fetchall()
-        assert risks, "Expected DATA_INTEGRITY risk_flag when inserting legal source without confirmed date"
+            # Invariant handling should have fired.
+            risks = conn.execute(
+                "SELECT * FROM risk_flag WHERE turnover_id = ? AND risk_type = 'DATA_INTEGRITY' AND resolved_at IS NULL",
+                (turnover_id,),
+            ).fetchall()
+            assert risks, "Expected DATA_INTEGRITY risk_flag when inserting legal source without confirmed date"
 
-        audits = conn.execute(
-            """SELECT * FROM audit_log
-               WHERE entity_type = 'turnover'
-                 AND entity_id = ?
-                 AND field_name = 'confirmed_invariant_violation'
-                 AND new_value = 'legal_source_without_date'
-                 AND source = 'system'""",
-            (turnover_id,),
-        ).fetchall()
-        assert audits, "Expected confirmed_invariant_violation audit from system"
-
-        conn.close()
+            audits = conn.execute(
+                """SELECT * FROM audit_log
+                   WHERE entity_type = 'turnover'
+                     AND entity_id = ?
+                     AND field_name = 'confirmed_invariant_violation'
+                     AND new_value = 'legal_source_without_date'
+                     AND source = 'system'""",
+                (turnover_id,),
+            ).fetchall()
+            assert audits, "Expected confirmed_invariant_violation audit from system"
+        finally:
+            conn.close()
     finally:
         os.unlink(path)
 

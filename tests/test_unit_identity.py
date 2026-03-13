@@ -118,15 +118,17 @@ def _db_with_schema_and_version_3():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path = f.name
     conn = get_connection(path)
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "db", "schema.sql")
-    with open(schema_path) as fp:
-        conn.executescript(fp.read())
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS schema_version (singleton INTEGER PRIMARY KEY CHECK (singleton=1), version INTEGER NOT NULL)"
-    )
-    conn.execute("INSERT OR REPLACE INTO schema_version (singleton, version) VALUES (1, 3)")
-    conn.commit()
-    conn.close()
+    try:
+        schema_path = os.path.join(os.path.dirname(__file__), "..", "db", "schema.sql")
+        with open(schema_path) as fp:
+            conn.executescript(fp.read())
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_version (singleton INTEGER PRIMARY KEY CHECK (singleton=1), version INTEGER NOT NULL)"
+        )
+        conn.execute("INSERT OR REPLACE INTO schema_version (singleton, version) VALUES (1, 3)")
+        conn.commit()
+    finally:
+        conn.close()
     return path
 
 

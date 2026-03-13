@@ -65,12 +65,12 @@ def test_import_fails_when_required_column_missing_and_stops_mutation():
         finally:
             os.unlink(csv_path)
 
-        batch = conn.execute("SELECT * FROM import_batch ORDER BY batch_id DESC LIMIT 1").fetchone()
-        assert batch is not None
-        assert batch["status"] == "FAILED"
-        assert conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM unit").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM task").fetchone()[0] == 0
+            batch = conn.execute("SELECT * FROM import_batch ORDER BY batch_id DESC LIMIT 1").fetchone()
+            assert batch is not None
+            assert batch["status"] == "FAILED"
+            assert conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM unit").fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM task").fetchone()[0] == 0
         finally:
             conn.close()
     finally:
@@ -81,8 +81,9 @@ def test_import_fails_when_date_invalid_and_stops_mutation():
     db_path = _fresh_db()
     try:
         conn = get_connection(db_path)
-        _seed_property(conn)
-        csv_path = _write_temp_csv(
+        try:
+            _seed_property(conn)
+            csv_path = _write_temp_csv(
             "\n".join(
                 [
                     "h1",
@@ -110,9 +111,10 @@ def test_import_fails_when_date_invalid_and_stops_mutation():
         finally:
             os.unlink(csv_path)
 
-        assert conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM unit").fetchone()[0] == 0
-        conn.close()
+            assert conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM unit").fetchone()[0] == 0
+        finally:
+            conn.close()
     finally:
         os.unlink(db_path)
 
@@ -121,8 +123,9 @@ def test_import_fails_when_required_sheet_missing():
     db_path = _fresh_db()
     try:
         conn = get_connection(db_path)
-        _seed_property(conn)
-        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        try:
+            _seed_property(conn)
+            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             xlsx_path = f.name
         try:
             with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
@@ -141,9 +144,10 @@ def test_import_fails_when_required_sheet_missing():
         finally:
             os.unlink(xlsx_path)
 
-        assert conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM unit").fetchone()[0] == 0
-        conn.close()
+            assert conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM unit").fetchone()[0] == 0
+        finally:
+            conn.close()
     finally:
         os.unlink(db_path)
 
@@ -152,8 +156,9 @@ def test_valid_file_passes_validation_and_imports():
     db_path = _fresh_db()
     try:
         conn = get_connection(db_path)
-        _seed_property(conn)
-        csv_path = _write_temp_csv(
+        try:
+            _seed_property(conn)
+            csv_path = _write_temp_csv(
             "\n".join(
                 [
                     "h1",
@@ -179,11 +184,12 @@ def test_valid_file_passes_validation_and_imports():
         finally:
             os.unlink(csv_path)
 
-        assert result["status"] == "SUCCESS"
-        assert result["applied_count"] == 1
-        assert result["invalid_count"] == 0
-        assert result["diagnostics"] == []
-        assert conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0] == 1
-        conn.close()
+            assert result["status"] == "SUCCESS"
+            assert result["applied_count"] == 1
+            assert result["invalid_count"] == 0
+            assert result["diagnostics"] == []
+            assert conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0] == 1
+        finally:
+            conn.close()
     finally:
         os.unlink(db_path)
