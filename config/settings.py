@@ -66,11 +66,19 @@ def get_settings() -> Settings:
         enable_db_writes_default = _parse_bool(_writes_default, False)
     else:
         enable_db_writes_default = True
+    # default_property_id must be an int; if misconfigured (e.g. set to a name),
+    # fall back to 1 instead of raising and breaking imports.
+    raw_default_pid = os.environ.get("DMRB_DEFAULT_PROPERTY_ID", "1")
+    try:
+        default_property_id = int(str(raw_default_pid).strip())
+    except (ValueError, TypeError):
+        default_property_id = 1
+
     return Settings(
         database_engine=database_engine,
         database_path=database_path,
         database_url=database_url,
-        default_property_id=int(os.environ.get("DMRB_DEFAULT_PROPERTY_ID", "1")),
+        default_property_id=default_property_id,
         allowed_phases=_parse_allowed_phases(os.environ.get("DMRB_ALLOWED_PHASES")),
         timezone=(os.environ.get("DMRB_TIMEZONE") or "UTC").strip(),
         enable_db_writes_default=enable_db_writes_default,

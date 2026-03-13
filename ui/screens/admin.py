@@ -621,7 +621,13 @@ def _run_import_for_report(
                 if len(errors) > 50:
                     st.caption(f"... and {len(errors) - 50} more diagnostics.")
         else:
+            # Show the raw error and a traceback so we can see exactly
+            # where runtime failures (like int('Charles Bryan')) occur.
+            import traceback
+
             st.error(str(e))
+            tb_text = "".join(traceback.format_exc())
+            st.code(tb_text, language="text")
     finally:
         try:
             conn.close()
