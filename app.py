@@ -4,20 +4,11 @@ Run from repo root: streamlit run the-dmrb/app.py
 Set COCKPIT_DB_PATH for backend mode (default: the-dmrb/data/cockpit.db).
 Backend-only: app fails visibly if DB/services fail to load.
 """
-import os
 
 import streamlit as st
 
-from config.settings import get_settings
 from ui.components.sidebar import render_navigation
-from ui.data.backend import (
-    BACKEND_AVAILABLE,
-    BACKEND_ERROR,
-    ensure_database_ready,
-    get_connection,
-    get_db_path,
-    turnover_service_mod,
-)
+from ui.data.backend import BACKEND_AVAILABLE, BACKEND_ERROR
 from ui.router import render_current_page
 from ui.state import init_session_state
 
@@ -72,46 +63,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 init_session_state()
-
-# Ensure DB is schema-initialized and migrated before any read path.
-_skip_bootstrap = os.getenv("SKIP_DB_BOOTSTRAP", "").strip().lower()
-if _skip_bootstrap not in ("1", "true", "yes", "on", "y"):
-    try:
-        ensure_database_ready(get_db_path())
-    except Exception as e:
-        st.error(f"Database initialization failed: {e}")
-        st.stop()
-
-# Backfill tasks for any open turnovers that have none (one-time reconciliation).
-if BACKEND_AVAILABLE and turnover_service_mod:
-    try:
-        conn = get_connection(get_db_path())
-        backfilled = turnover_service_mod.reconcile_missing_tasks(conn)
-        if backfilled:
-            conn.commit()
-        conn.close()
-    except Exception:
-        pass
-
-# Reconcile legacy AVAILABLE_UNITS imports so Vacant rows with Available Date
-# and no open turnover are converted into turnovers and marked as OK.
-if BACKEND_AVAILABLE:
-    try:
-        from services.imports.available_units import reconcile_available_units_vacancy_invariant
-
-        settings = get_settings()
-        conn = get_connection(get_db_path())
-        reconcile_available_units_vacancy_invariant(
-            conn,
-            property_id=settings.default_property_id,
-            today=settings.today(),
-            actor=settings.default_actor,
-        )
-        conn.commit()
-        conn.close()
-    except Exception:
-        # Any failure here should not block the UI from loading.
-        pass
 
 render_navigation(st.session_state.page)
 if render_top_flags is not None:

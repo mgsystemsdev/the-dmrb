@@ -10,7 +10,11 @@ from db import repository
 from imports.validation.file_validator import validate_import_file
 from imports.validation.schema_validator import validate_import_schema
 
-from services.imports.available_units import _parse_available_units, apply_available_units
+from services.imports.available_units import (
+    _parse_available_units,
+    apply_available_units,
+    reconcile_available_units_vacancy_invariant,
+)
 from services.imports.constants import (
     APP_SETTINGS,
     AVAILABLE_UNITS,
@@ -135,6 +139,15 @@ def import_report_file(
     elif report_type == AVAILABLE_UNITS:
         applied_count, conflict_count, invalid_count, diagnostics = apply_available_units(
             conn, batch_id, rows, property_id, now_iso, actor, corr_id
+        )
+        # After applying AVAILABLE_UNITS, reconcile the vacancy invariant so that
+        # legacy batches with Vacant rows and Available Date but no open turnover
+        # are brought into alignment with the current rules.
+        reconcile_available_units_vacancy_invariant(
+            conn,
+            property_id=property_id,
+            today=today,
+            actor=actor,
         )
     elif report_type == DMRB:
         applied_count, conflict_count, invalid_count, diagnostics = apply_dmrb(
