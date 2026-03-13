@@ -127,6 +127,10 @@ def _read_for_validation(report_type: str, file_path: str) -> pd.DataFrame:
     df.columns = df.columns.map(str).str.strip()
     if report_type == "PENDING_FAS":
         df = df.rename(columns={"Unit Number": "Unit"})
+
+    # Ensure a simple 0..N-1 integer index so diagnostics using int(idx)
+    # never crash even when the CSV sets a custom index or name column.
+    df.reset_index(drop=True, inplace=True)
     return df
 
 
