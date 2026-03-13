@@ -214,10 +214,11 @@ def test_scheduled_move_out_override_skip_and_clear():
     try:
         ensure_database_ready(path)
         conn = get_connection(path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("INSERT OR IGNORE INTO property (property_id, name) VALUES (1, 'P')")
-        conn.commit()
-        today = date.today()
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("INSERT OR IGNORE INTO property (property_id, name) VALUES (1, 'P')")
+            conn.commit()
+            today = date.today()
         unit_code = "5-A-301"
         csv_create = "\n".join(
             ["hdr1", "hdr2", "hdr3", "hdr4", "hdr5", "hdr6", "Unit,Move-Out Date", f"{unit_code},2025-01-05", ""]
@@ -286,7 +287,8 @@ def test_scheduled_move_out_override_skip_and_clear():
             (tid,),
         ).fetchall()
         assert len(cleared) >= 1
-        conn.close()
+        finally:
+            conn.close()
     finally:
         os.unlink(path)
 
