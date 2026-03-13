@@ -186,3 +186,5 @@ ORDER BY created_at;
 | 5. UI showing wrong record | No | Board shows open turnover only; one open per unit. |
 
 **Verdict:** Pipeline is aligned on `report_ready_date` with no fallback and no rename. Blank Ready Date on the board means the **open** turnover has NULL `report_ready_date` in the DB; confirm with the diagnostic query (Prompt 8) and then fix upstream (import/override rules) if needed.
+
+**After Available Units import:** The orchestrator runs `reconcile_available_units_readiness_from_latest` immediately after apply, so the same Move-In Ready Date shown in Admin → Import → “Available Units — Latest import” is written to `turnover.report_ready_date` for OK rows. The board’s Ready Date column therefore matches that import view; board caches are invalidated so a refresh shows the new values.

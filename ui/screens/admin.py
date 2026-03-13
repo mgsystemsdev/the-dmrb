@@ -573,6 +573,11 @@ def _run_import_for_report(
                 f"Batch ID: {batch_id} | Status: {status} | Records: {record_count} | "
                 f"Applied: {applied_count} | Conflicts: {conflict_count} | Invalid: {invalid_count}"
             )
+            if report_type == "AVAILABLE_UNITS":
+                st.caption(
+                    "Ready Date on the board is synced from this import’s Move-In Ready Date. "
+                    "Refresh the DMRB board to see it."
+                )
         if diagnostics:
             st.warning(f"Row diagnostics: {len(diagnostics)} issue(s)")
             for diag in diagnostics[:50]:

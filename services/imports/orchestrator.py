@@ -13,6 +13,7 @@ from imports.validation.schema_validator import validate_import_schema
 from services.imports.available_units import (
     _parse_available_units,
     apply_available_units,
+    reconcile_available_units_readiness_from_latest,
     reconcile_available_units_vacancy_invariant,
 )
 from services.imports.constants import (
@@ -139,6 +140,14 @@ def import_report_file(
     elif report_type == AVAILABLE_UNITS:
         applied_count, conflict_count, invalid_count, diagnostics = apply_available_units(
             conn, batch_id, rows, property_id, now_iso, actor, corr_id
+        )
+        # Reapply Move-In Ready Date from this batch so board Ready Date matches last-import view
+        reconcile_available_units_readiness_from_latest(
+            conn,
+            property_id=property_id,
+            today=today,
+            actor=actor,
+            corr_id=corr_id,
         )
         # Enforce vacancy invariant after AVAILABLE_UNITS import
         reconcile_available_units_vacancy_invariant(
