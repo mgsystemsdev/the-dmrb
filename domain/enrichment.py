@@ -15,6 +15,7 @@ from domain.lifecycle import (
     STABILIZATION,
     VACANT,
     derive_lifecycle_phase,
+    derive_nvm,
     effective_move_out_date,
 )
 from domain.risk_radar import score_enriched_turnover
@@ -48,17 +49,6 @@ def business_days(start: Any, end: Any) -> Optional[int]:
             count += 1
         d += timedelta(days=1)
     return count
-
-
-def _derive_nvm_short(phase: str) -> str:
-    """Match the legacy board contract used by harness tests (N/V/M)."""
-    if phase in (NOTICE, NOTICE_SMI):
-        return "N"
-    if phase == VACANT:
-        return "V"
-    if phase in (SMI, MOVE_IN_COMPLETE, STABILIZATION):
-        return "M"
-    return "—"
 
 
 def derive_phase(t: dict, today: date) -> str:
@@ -101,7 +91,7 @@ def compute_facts(row: dict, today: date) -> dict:
         },
         today,
     )
-    nvm = _derive_nvm_short(phase)
+    nvm = derive_nvm(phase)
 
     is_vacant = phase == VACANT
     is_smi = phase in (SMI, MOVE_IN_COMPLETE, STABILIZATION)

@@ -348,14 +348,16 @@ def derive_phase(t: dict, today: Optional[date] = None) -> str:
     return "NOTICE_SMI" if move_in else "NOTICE"
 
 def derive_nvm(phase: str) -> str:
-    """N/V/M from phase. NOTICE|NOTICE_SMI -> N, VACANT -> V, SMI|MOVE_IN_COMPLETE|STABILIZATION -> M."""
-    if phase in ("NOTICE", "NOTICE_SMI"):
-        return "N"
-    if phase == "VACANT":
-        return "V"
-    if phase in ("SMI", "MOVE_IN_COMPLETE", "STABILIZATION"):
-        return "M"
-    return "—"
+    """Full-word NVM label from phase (matches domain.lifecycle.derive_nvm for harness)."""
+    _PHASE_TO_NVM = {
+        "NOTICE": "Notice",
+        "NOTICE_SMI": "Notice + SMI",
+        "VACANT": "Vacant",
+        "SMI": "SMI",
+        "MOVE_IN_COMPLETE": "Move-In",
+        "STABILIZATION": "Move-In",
+    }
+    return _PHASE_TO_NVM.get(phase, "—")
 
 # ---------------------------------------------------------------------------
 # Stage 1 — Fact engine
