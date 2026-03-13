@@ -64,7 +64,10 @@ SCHEMA_RULES: dict[str, SchemaRules] = {
     "PENDING_MOVE_INS": SchemaRules(
         required_columns=("Unit", "Move In Date"),
         required_fields=("Unit", "Move In Date"),
-        date_columns=("Move In Date",),
+        # Do not enforce date format at schema level for Pending Move-Ins.
+        # Values like "Not Completed" are allowed; the importer will coerce
+        # them with errors='coerce' and treat invalid dates as None.
+        date_columns=(),
         numeric_columns=(),
     ),
     "AVAILABLE_UNITS": SchemaRules(
