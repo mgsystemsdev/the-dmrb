@@ -34,8 +34,9 @@ def test_import_fails_when_required_column_missing_and_stops_mutation():
     db_path = _fresh_db()
     try:
         conn = get_connection(db_path)
-        _seed_property(conn)
-        csv_path = _write_temp_csv(
+        try:
+            _seed_property(conn)
+            csv_path = _write_temp_csv(
             "\n".join(
                 [
                     "h1",
@@ -70,7 +71,8 @@ def test_import_fails_when_required_column_missing_and_stops_mutation():
         assert conn.execute("SELECT COUNT(*) FROM turnover").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM unit").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM task").fetchone()[0] == 0
-        conn.close()
+        finally:
+            conn.close()
     finally:
         os.unlink(db_path)
 
